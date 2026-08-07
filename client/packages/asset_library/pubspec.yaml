@@ -1,0 +1,15 @@
+name: asset_library
+description: Image asset selection and upload feature boundary.
+publish_to: none
+version: 0.1.0
+resolution: workspace
+environment:
+  sdk: ^3.12.0
+dependencies:
+  flutter:
+    sdk: flutter
+  app_core: ^0.1.0
+  image_picker: ^1.2.3
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

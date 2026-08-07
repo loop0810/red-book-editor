@@ -1,0 +1,55 @@
+# macOS
+.DS_Store
+
+# IDE / editors
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# 沉淀总结与学习笔记，不随仓库上传
+docs/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+client/ios/Flutter/ephemeral/
+client/ios/Flutter/Generated.xcconfig
+client/ios/Flutter/flutter_export_environment.sh
+client/ios/Flutter/.last_build_id
+client/ios/Pods/
+client/android/local.properties
+client/android/key.properties
+client/android/app/debug/
+client/android/app/profile/
+client/android/app/release/
+**/.gradle/
+*.symbols
+*.map.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+server/storage/
+.env
+.env.*
+!.env.example
+
+# 签名材料与密钥
+*.jks
+*.keystore
+*.p12
+*.mobileprovision

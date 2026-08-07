@@ -1,0 +1,214 @@
+import 'package:app_core/app_core.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:note_creation/note_creation.dart';
+import 'package:account_workspace/account_workspace.dart';
+import 'package:asset_library/asset_library.dart';
+import 'package:publish_records/publish_records.dart';
+
+final apiClientProvider = Provider<RedBookEditorApiClient>(
+  (ref) => RedBookEditorApiClient(),
+);
+
+const _accountId = '00000000-0000-0000-0000-000000000001';
+const _defaultColumnId = '00000000-0000-0000-0000-000000000002';
+
+final _router = GoRouter(
+  routes: [
+    GoRoute(path: '/', builder: (context, state) => const WorkbenchHomePage()),
+  ],
+);
+
+void main() {
+  runApp(const ProviderScope(child: RedBookEditorApp()));
+}
+
+class RedBookEditorApp extends StatelessWidget {
+  const RedBookEditorApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp.router(
+      title: '小红书内容工作台',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
+      ),
+      routerConfig: _router,
+    );
+  }
+}
+
+class WorkbenchHomePage extends ConsumerWidget {
+  const WorkbenchHomePage({super.key});
+
+  Future<void> _openEditor(
+    BuildContext context,
+    WidgetRef ref,
+    NoteDraft draft,
+  ) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => NoteEditorPage(
+          draft: draft,
+          onRegenerateField: (current, field) => ref
+              .read(apiClientProvider)
+              .regenerateField(draft: current, field: field),
+          onSaveDraft: (current) =>
+              ref.read(apiClientProvider).saveNote(draft: current),
+          loadVersions: (noteId) =>
+              ref.read(apiClientProvider).listNoteVersions(noteId: noteId),
+          onPublish: () => _openPublishRecord(context, ref, draft),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openPublishRecord(
+    BuildContext context,
+    WidgetRef ref,
+    NoteDraft draft,
+  ) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PublishRecordPage(
+          onSave: ({required status, link, views, likes, saves, comments}) =>
+              ref
+                  .read(apiClientProvider)
+                  .recordPublication(
+                    noteId: draft.noteId,
+                    status: status,
+                    link: link,
+                    views: views,
+                    likes: likes,
+                    saves: saves,
+                    comments: comments,
+                  ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('小红书内容工作台')),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => NoteCreationPage(
+                      generate: (source) => ref
+                          .read(apiClientProvider)
+                          .generateNote(
+                            accountId: _accountId,
+                            columnId: _defaultColumnId,
+                            source: source,
+                          ),
+                      uploadAsset: (filePath) => ref
+                          .read(apiClientProvider)
+                          .uploadAsset(
+                            accountId: _accountId,
+                            filePath: filePath,
+                          ),
+                      onDraftGenerated: (draft) async {
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => NoteEditorPage(
+                              draft: draft,
+                              onRegenerateField: (current, field) => ref
+                                  .read(apiClientProvider)
+                                  .regenerateField(
+                                    draft: current,
+                                    field: field,
+                                  ),
+                              onSaveDraft: (current) => ref
+                                  .read(apiClientProvider)
+                                  .saveNote(draft: current),
+                              loadVersions: (noteId) => ref
+                                  .read(apiClientProvider)
+                                  .listNoteVersions(noteId: noteId),
+                              onPublish: () =>
+                                  _openPublishRecord(context, ref, draft),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('新建育儿笔记'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => DraftListPage(
+                    listDrafts: () => ref
+                        .read(apiClientProvider)
+                        .listNotes(accountId: _accountId),
+                    onOpenDraft: (draft) => _openEditor(context, ref, draft),
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.article_outlined),
+              label: const Text('草稿列表'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => AssetLibraryPage(
+                    listAssets: () => ref
+                        .read(apiClientProvider)
+                        .listAssets(accountId: _accountId),
+                    uploadAsset: (filePath, onProgress) => ref
+                        .read(apiClientProvider)
+                        .uploadAsset(
+                          accountId: _accountId,
+                          filePath: filePath,
+                          onProgress: onProgress,
+                        ),
+                    deleteAsset: (assetId) => ref
+                        .read(apiClientProvider)
+                        .deleteAsset(assetId: assetId),
+                    reorderAssets: (assetIds) => ref
+                        .read(apiClientProvider)
+                        .reorderAssets(
+                          accountId: _accountId,
+                          assetIds: assetIds,
+                        ),
+                    downloadAsset: (assetId) => ref
+                        .read(apiClientProvider)
+                        .downloadAsset(assetId: assetId),
+                    exportImage: (bytes, filename) =>
+                        const GalleryExportService().saveImage(
+                          bytes: bytes,
+                          filename: filename,
+                        ),
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.photo_library_outlined),
+              label: const Text('图片素材'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AccountWorkspacePage()),
+              ),
+              icon: const Icon(Icons.settings),
+              label: const Text('账号配置'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -1,0 +1,14 @@
+name: publish_records
+description: Manual publication and performance record feature boundary.
+publish_to: none
+version: 0.1.0
+resolution: workspace
+environment:
+  sdk: ^3.12.0
+dependencies:
+  flutter:
+    sdk: flutter
+  app_core: ^0.1.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

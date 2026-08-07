@@ -1,0 +1,13 @@
+name: account_workspace
+description: Account profile and content column feature boundary.
+publish_to: none
+version: 0.1.0
+resolution: workspace
+environment:
+  sdk: ^3.12.0
+dependencies:
+  flutter:
+    sdk: flutter
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

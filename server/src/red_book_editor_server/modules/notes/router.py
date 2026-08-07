@@ -1,0 +1,405 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+from uuid import UUID, uuid4
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from red_book_editor_server.app.dependencies import database_session
+from red_book_editor_server.app.config import get_settings
+from red_book_editor_server.domain.contracts import (
+    DraftVersionDto,
+    NoteDraftDto,
+    NoteStatus,
+    PublishRecordDto,
+    ReviewResultDto,
+    SourceExperienceDto,
+    AssetDto,
+)
+from red_book_editor_server.infrastructure.models import (
+    AccountModel,
+    ContentColumnModel,
+    DraftVersionModel,
+    NoteModel,
+    PublishRecordModel,
+    AssetModel,
+)
+from red_book_editor_server.modules.content_workflow.generator import StubContentGenerator
+from red_book_editor_server.modules.content_workflow.review import review_draft
+
+router = APIRouter(tags=["notes"])
+
+
+class CreateNoteRequest(BaseModel):
+    column_id: UUID
+    source: SourceExperienceDto
+
+
+class PublishRecordInput(BaseModel):
+    status: NoteStatus
+    published_at: datetime | None = None
+    link: str | None = None
+    notes: str = ""
+    views: int | None = Field(default=None, ge=0)
+    likes: int | None = Field(default=None, ge=0)
+    saves: int | None = Field(default=None, ge=0)
+    comments: int | None = Field(default=None, ge=0)
+
+
+class ReorderAssetsRequest(BaseModel):
+    asset_ids: list[UUID] = Field(min_length=1)
+
+
+class UpdateNoteRequest(BaseModel):
+    topic_angle: str = ""
+    title_candidates: list[str] = Field(default_factory=list)
+    body: str = ""
+    hashtags: list[str] = Field(default_factory=list)
+    cover_copy: str = ""
+    image_suggestions: list[str] = Field(default_factory=list)
+
+
+@router.post("/api/v1/accounts/{account_id}/assets", response_model=dict[str, str], status_code=201)
+async def upload_asset(
+    account_id: UUID,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(database_session),
+) -> dict[str, str]:
+    account = await session.get(AccountModel, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="image_required"
+        )
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="asset_too_large"
+        )
+    asset_id = uuid4()
+    safe_filename = Path(file.filename or "asset").name
+    storage_key = f"{account_id}/{asset_id}/{safe_filename}"
+    storage_path = get_settings().storage_root / storage_key
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+    storage_path.write_bytes(contents)
+    record = AssetModel(
+        id=asset_id,
+        account_id=account_id,
+        filename=safe_filename,
+        content_type=file.content_type,
+        storage_key=storage_key,
+    )
+    session.add(record)
+    await session.commit()
+    return {"asset_id": str(asset_id), "storage_key": storage_key}
+
+
+@router.get("/api/v1/accounts/{account_id}/assets", response_model=list[AssetDto])
+async def list_assets(
+    account_id: UUID,
+    session: AsyncSession = Depends(database_session),
+) -> list[AssetDto]:
+    result = await session.execute(
+        select(AssetModel).where(AssetModel.account_id == account_id).order_by(AssetModel.position)
+    )
+    return [
+        AssetDto(
+            asset_id=asset.id,
+            account_id=asset.account_id,
+            filename=asset.filename,
+            content_type=asset.content_type,
+            position=asset.position,
+        )
+        for asset in result.scalars()
+    ]
+
+
+@router.put("/api/v1/accounts/{account_id}/assets/order", response_model=list[AssetDto])
+async def reorder_assets(
+    account_id: UUID,
+    request: ReorderAssetsRequest,
+    session: AsyncSession = Depends(database_session),
+) -> list[AssetDto]:
+    records = list(
+        (
+            await session.execute(
+                select(AssetModel).where(
+                    AssetModel.account_id == account_id,
+                    AssetModel.id.in_(request.asset_ids),
+                )
+            )
+        ).scalars()
+    )
+    by_id = {asset.id: asset for asset in records}
+    if len(by_id) != len(request.asset_ids):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="asset_not_found")
+    for position, asset_id in enumerate(request.asset_ids):
+        by_id[asset_id].position = position
+    await session.commit()
+    return [
+        AssetDto(
+            asset_id=asset.id,
+            account_id=asset.account_id,
+            filename=asset.filename,
+            content_type=asset.content_type,
+            position=asset.position,
+        )
+        for asset in sorted(records, key=lambda asset: asset.position)
+    ]
+
+
+@router.get("/api/v1/assets/{asset_id}")
+async def download_asset(
+    asset_id: UUID,
+    session: AsyncSession = Depends(database_session),
+) -> FileResponse:
+    asset = await session.get(AssetModel, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="asset_not_found")
+    path = get_settings().storage_root / asset.storage_key
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="asset_file_not_found")
+    return FileResponse(path, media_type=asset.content_type, filename=asset.filename)
+
+
+@router.delete("/api/v1/assets/{asset_id}", status_code=204)
+async def delete_asset(
+    asset_id: UUID,
+    session: AsyncSession = Depends(database_session),
+) -> None:
+    asset = await session.get(AssetModel, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="asset_not_found")
+    path = get_settings().storage_root / asset.storage_key
+    path.unlink(missing_ok=True)
+    await session.delete(asset)
+    await session.commit()
+
+
+def note_dto(note: NoteModel) -> NoteDraftDto:
+    source = SourceExperienceDto.model_validate(note.source)
+    content = note.content
+    return NoteDraftDto(
+        note_id=note.id,
+        account_id=note.account_id,
+        column_id=note.column_id,
+        status=NoteStatus(note.status),
+        topic_angle=content.get("topic_angle", ""),
+        title_candidates=content.get("title_candidates", []),
+        body=content.get("body", ""),
+        hashtags=content.get("hashtags", []),
+        cover_copy=content.get("cover_copy", ""),
+        image_suggestions=content.get("image_suggestions", []),
+        source=source,
+        review=ReviewResultDto.model_validate(note.review) if note.review else None,
+        updated_at=note.updated_at or datetime.now(UTC),
+    )
+
+
+@router.post("/api/v1/accounts/{account_id}/notes", response_model=NoteDraftDto, status_code=201)
+async def create_note(
+    account_id: UUID,
+    request: CreateNoteRequest,
+    session: AsyncSession = Depends(database_session),
+) -> NoteDraftDto:
+    if await session.get(AccountModel, account_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+    column = await session.get(ContentColumnModel, request.column_id)
+    if column is None or column.account_id != account_id or not column.enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="column_not_found")
+    draft = await StubContentGenerator().generate(
+        request.source,
+        account_id=account_id,
+        column_id=request.column_id,
+    )
+    review = await review_draft(draft)
+    draft = draft.model_copy(
+        update={
+            "status": NoteStatus.NEEDS_REVIEW if not review.passed else NoteStatus.READY,
+            "review": review,
+        }
+    )
+    note = NoteModel(
+        id=draft.note_id,
+        account_id=account_id,
+        column_id=request.column_id,
+        status=draft.status.value,
+        source=request.source.model_dump(mode="json"),
+        content=draft.model_dump(
+            mode="json",
+            exclude={
+                "note_id",
+                "account_id",
+                "column_id",
+                "status",
+                "source",
+                "review",
+                "updated_at",
+            },
+        ),
+        review=review.model_dump(mode="json"),
+    )
+    session.add(note)
+    await session.flush()
+    session.add(
+        DraftVersionModel(
+            note_id=note.id,
+            version=1,
+            content=note.content,
+        )
+    )
+    await session.commit()
+    await session.refresh(note)
+    return note_dto(note)
+
+
+@router.get("/api/v1/notes/{note_id}", response_model=NoteDraftDto)
+async def get_note(
+    note_id: UUID,
+    session: AsyncSession = Depends(database_session),
+) -> NoteDraftDto:
+    note = await session.get(NoteModel, note_id)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note_not_found")
+    return note_dto(note)
+
+
+@router.get("/api/v1/accounts/{account_id}/notes", response_model=list[NoteDraftDto])
+async def list_account_notes(
+    account_id: UUID,
+    session: AsyncSession = Depends(database_session),
+) -> list[NoteDraftDto]:
+    result = await session.execute(
+        select(NoteModel)
+        .where(NoteModel.account_id == account_id)
+        .order_by(NoteModel.updated_at.desc())
+    )
+    return [note_dto(note) for note in result.scalars()]
+
+
+@router.put("/api/v1/notes/{note_id}", response_model=NoteDraftDto)
+async def update_note(
+    note_id: UUID,
+    payload: UpdateNoteRequest,
+    session: AsyncSession = Depends(database_session),
+) -> NoteDraftDto:
+    note = await session.get(NoteModel, note_id)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note_not_found")
+    content = payload.model_dump()
+    note.content = content
+    review = await review_draft(note_dto(note))
+    note.status = NoteStatus.NEEDS_REVIEW if not review.passed else NoteStatus.READY
+    note.review = review.model_dump(mode="json")
+    next_version = 1
+    versions = (
+        (
+            await session.execute(
+                select(DraftVersionModel)
+                .where(DraftVersionModel.note_id == note_id)
+                .order_by(DraftVersionModel.version.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if versions is not None:
+        next_version = versions.version + 1
+    session.add(
+        DraftVersionModel(
+            note_id=note.id,
+            version=next_version,
+            content=content,
+        )
+    )
+    await session.commit()
+    await session.refresh(note)
+    return note_dto(note)
+
+
+@router.get("/api/v1/notes/{note_id}/versions", response_model=list[DraftVersionDto])
+async def list_note_versions(
+    note_id: UUID,
+    session: AsyncSession = Depends(database_session),
+) -> list[DraftVersionDto]:
+    if await session.get(NoteModel, note_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note_not_found")
+    result = await session.execute(
+        select(DraftVersionModel)
+        .where(DraftVersionModel.note_id == note_id)
+        .order_by(DraftVersionModel.version.asc())
+    )
+    return [
+        DraftVersionDto(
+            version=version.version,
+            topic_angle=version.content.get("topic_angle", ""),
+            title_candidates=version.content.get("title_candidates", []),
+            body=version.content.get("body", ""),
+            hashtags=version.content.get("hashtags", []),
+            cover_copy=version.content.get("cover_copy", ""),
+            image_suggestions=version.content.get("image_suggestions", []),
+            created_at=version.created_at,
+        )
+        for version in result.scalars()
+    ]
+
+
+@router.get("/api/v1/notes/{note_id}/export", response_model=NoteDraftDto)
+async def export_note(
+    note_id: UUID,
+    session: AsyncSession = Depends(database_session),
+) -> NoteDraftDto:
+    note = await session.get(NoteModel, note_id)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note_not_found")
+    review = ReviewResultDto.model_validate(note.review) if note.review else None
+    if review and any(finding.level.value == "blocking" for finding in review.findings):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="blocking_review")
+    return note_dto(note)
+
+
+@router.post(
+    "/api/v1/notes/{note_id}/publish-record", response_model=PublishRecordDto, status_code=201
+)
+async def create_publish_record(
+    note_id: UUID,
+    payload: PublishRecordInput,
+    session: AsyncSession = Depends(database_session),
+) -> PublishRecordDto:
+    if await session.get(NoteModel, note_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note_not_found")
+    record = PublishRecordModel(
+        note_id=note_id,
+        status=payload.status.value,
+        published_at=payload.published_at,
+        link=payload.link,
+        notes=payload.notes,
+        views=payload.views,
+        likes=payload.likes,
+        saves=payload.saves,
+        comments=payload.comments,
+    )
+    session.add(record)
+    await session.commit()
+    note = await session.get(NoteModel, note_id)
+    if note is not None:
+        note.status = payload.status.value
+        await session.commit()
+    return PublishRecordDto(
+        note_id=record.note_id,
+        status=NoteStatus(record.status),
+        published_at=record.published_at,
+        link=record.link,
+        notes=record.notes,
+        views=record.views,
+        likes=record.likes,
+        saves=record.saves,
+        comments=record.comments,
+    )

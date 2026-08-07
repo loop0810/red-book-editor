@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: red_book_editor_development
+      POSTGRES_USER: red_book_editor
+      POSTGRES_PASSWORD: red_book_editor-local-only
+    ports:
+      - "5432:5432"
+    volumes:
+      - red_book_editor_postgres:/var/lib/postgresql/data
+
+volumes:
+  red_book_editor_postgres:
