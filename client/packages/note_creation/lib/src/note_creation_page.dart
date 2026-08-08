@@ -17,7 +17,8 @@ class NoteCreationPage extends StatefulWidget {
 
   final GenerateNote generate;
   final UploadAsset? uploadAsset;
-  final Future<void> Function(NoteDraft draft)? onDraftGenerated;
+  final Future<void> Function(StyledNoteResponse response, StyleForm form)?
+  onDraftGenerated;
 
   @override
   State<NoteCreationPage> createState() => _NoteCreationPageState();
@@ -31,6 +32,7 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
   final _picker = ImagePicker();
   final _pickedPaths = <String>[];
   int _babyMonth = 19;
+  StyleForm _selectedForm = StyleForm.experience;
   bool _loading = false;
   String? _error;
   final _draftStore = SourceExperienceDraftStore();
@@ -109,14 +111,20 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
         assetIds: assetIds,
       );
       await _draftStore.save(source);
-      final draft = await widget.generate(source);
+      final response = await widget.generate(source, _selectedForm);
       await _draftStore.clear();
       if (mounted) {
         if (widget.onDraftGenerated != null) {
-          await widget.onDraftGenerated!(draft);
+          await widget.onDraftGenerated!(response, _selectedForm);
         } else {
           await Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => NoteEditorPage(draft: draft)),
+            MaterialPageRoute(
+              builder: (_) => NoteEditorPage(
+                draft: response.draft,
+                agentTrace: response.agentTrace,
+                styleForm: _selectedForm,
+              ),
+            ),
           );
         }
       }
@@ -231,6 +239,20 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],
+          const SizedBox(height: 16),
+          Text('表达形式', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          SegmentedButton<StyleForm>(
+            segments: const [
+              ButtonSegment(value: StyleForm.popularScience, label: Text('科普')),
+              ButtonSegment(value: StyleForm.experience, label: Text('经验')),
+              ButtonSegment(value: StyleForm.advertorial, label: Text('软文')),
+            ],
+            selected: {_selectedForm},
+            onSelectionChanged: (selection) {
+              setState(() => _selectedForm = selection.first);
+            },
+          ),
           const SizedBox(height: 24),
           FilledButton.icon(
             onPressed: _loading ? null : _generate,

@@ -15,6 +15,12 @@ class NoteStatus(StrEnum):
     DISCARDED = "discarded"
 
 
+class StyleForm(StrEnum):
+    POPULAR_SCIENCE = "popular_science"
+    EXPERIENCE = "experience"
+    ADVERTORIAL = "advertorial"
+
+
 class RiskLevel(StrEnum):
     NONE = "none"
     WARNING = "warning"
@@ -59,6 +65,64 @@ class ReviewFindingDto(BaseModel):
 class ReviewResultDto(BaseModel):
     passed: bool
     findings: list[ReviewFindingDto] = Field(default_factory=list)
+
+
+class ToneProfile(BaseModel):
+    person: str = ""
+    words: list[str] = Field(default_factory=list)
+    forbidden: list[str] = Field(default_factory=list)
+
+
+class RichTextProfile(BaseModel):
+    emoji_rules: str = ""
+    separators: list[str] = Field(default_factory=list)
+    tag_count_range: tuple[int, int] = (4, 15)
+
+
+class TagPool(BaseModel):
+    generic: list[str] = Field(default_factory=list)
+    precise: list[str] = Field(default_factory=list)
+    trending: list[str] = Field(default_factory=list)
+
+
+class CoverProfile(BaseModel):
+    pattern: str = ""
+    examples: list[str] = Field(default_factory=list)
+
+
+class StructureTemplate(BaseModel):
+    name: str
+    sequence: list[str] = Field(default_factory=list)
+
+
+class StyleProfile(BaseModel):
+    """一种表达形式的风格档案，来自服务端代码库内版本化 YAML。"""
+
+    form: StyleForm
+    display_name: str
+    hooks: list[str] = Field(default_factory=list)
+    structures: list[StructureTemplate] = Field(default_factory=list)
+    tone: ToneProfile = Field(default_factory=ToneProfile)
+    rich_text: RichTextProfile = Field(default_factory=RichTextProfile)
+    tags: TagPool = Field(default_factory=TagPool)
+    cover: CoverProfile = Field(default_factory=CoverProfile)
+    cta: list[str] = Field(default_factory=list)
+
+
+class AgentTraceStepDto(BaseModel):
+    """API 层返回的 agent 步骤。"""
+
+    order: int
+    kind: str
+    label: str
+    summary: str
+
+
+class StyledNoteResponseDto(BaseModel):
+    """风格转换响应：风格化草稿 + agent 逐步 trace。"""
+
+    draft: NoteDraftDto
+    agent_trace: list[AgentTraceStepDto] = Field(default_factory=list)
 
 
 class NoteDraftDto(BaseModel):

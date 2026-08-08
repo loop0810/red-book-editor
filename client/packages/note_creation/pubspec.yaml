@@ -13,3 +13,5 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  shared_preferences: ^2.5.3
+  shared_preferences_platform_interface: ^2.4.0

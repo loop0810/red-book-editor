@@ -13,7 +13,18 @@ from red_book_editor_server.modules.content_workflow.generator import (
 )
 
 
-def test_generate_note_returns_structured_ready_draft(client: TestClient) -> None:
+def _source_payload(
+    scenario: str = "睡前哭闹",
+    actions: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "baby_month": 19,
+        "scenario": scenario,
+        "actions": actions or ["固定绘本时间"],
+    }
+
+
+def test_generate_note_returns_styled_response_with_stub_fallback(client: TestClient) -> None:
     account_id = uuid4()
     column_id = uuid4()
     response = client.post(
@@ -21,36 +32,62 @@ def test_generate_note_returns_structured_ready_draft(client: TestClient) -> Non
         json={
             "account_id": str(account_id),
             "column_id": str(column_id),
-            "source": {
-                "baby_month": 19,
-                "scenario": "睡前哭闹",
-                "actions": ["固定绘本时间"],
-                "observations": "入睡过程变顺了一些",
-            },
+            "form": "experience",
+            "source": _source_payload(actions=["固定绘本时间"]),
         },
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "ready"
-    assert payload["review"]["passed"] is True
-    assert payload["account_id"] == str(account_id)
+    assert payload["draft"]["status"] == "ready"
+    assert payload["draft"]["review"] is None
+    assert payload["draft"]["account_id"] == str(account_id)
+    assert payload["agent_trace"][0]["label"] == "stub_fallback"
 
 
-def test_generate_note_marks_medication_content_for_review(client: TestClient) -> None:
+def test_generate_note_requires_form(client: TestClient) -> None:
     response = client.post(
         "/api/v1/notes/generate",
         json={
             "account_id": str(uuid4()),
             "column_id": str(uuid4()),
-            "source": {
-                "baby_month": 19,
-                "scenario": "发烧",
-                "actions": ["询问用什么药"],
-            },
+            "source": _source_payload(),
         },
     )
+    assert response.status_code == 422
+
+
+def test_generate_note_rejects_unknown_form(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/notes/generate",
+        json={
+            "account_id": str(uuid4()),
+            "column_id": str(uuid4()),
+            "form": "unknown",
+            "source": _source_payload(),
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_restyle_note_returns_draft_and_trace(client: TestClient) -> None:
+    draft_response = client.post(
+        "/api/v1/notes/generate",
+        json={
+            "account_id": str(uuid4()),
+            "column_id": str(uuid4()),
+            "form": "experience",
+            "source": _source_payload(),
+        },
+    )
+    draft = draft_response.json()["draft"]
+    response = client.post(
+        "/api/v1/notes/style",
+        json={"draft": draft, "form": "popular_science"},
+    )
     assert response.status_code == 200
-    assert response.json()["status"] == "needs_review"
+    payload = response.json()
+    assert payload["draft"]["note_id"] == draft["note_id"]
+    assert payload["agent_trace"][0]["label"] == "stub_fallback"
 
 
 def test_regenerate_field_preserves_other_fields(client: TestClient) -> None:
@@ -61,10 +98,11 @@ def test_regenerate_field_preserves_other_fields(client: TestClient) -> None:
         json={
             "account_id": str(account_id),
             "column_id": str(column_id),
+            "form": "experience",
             "source": {"baby_month": 19, "scenario": "出门", "actions": ["准备清单"]},
         },
     )
-    draft = draft_response.json()
+    draft = draft_response.json()["draft"]
     old_body = draft["body"]
     regenerated = client.post(
         "/api/v1/notes/regenerate-field",
@@ -72,6 +110,8 @@ def test_regenerate_field_preserves_other_fields(client: TestClient) -> None:
     )
     assert regenerated.status_code == 200
     assert regenerated.json()["body"] == old_body
+    assert regenerated.json()["status"] == "ready"
+    assert regenerated.json()["review"] is None
 
 
 def test_generate_note_rejects_invalid_source(client: TestClient) -> None:
@@ -80,6 +120,7 @@ def test_generate_note_rejects_invalid_source(client: TestClient) -> None:
         json={
             "account_id": str(uuid4()),
             "column_id": str(uuid4()),
+            "form": "experience",
             "source": {"baby_month": 19, "scenario": "", "actions": []},
         },
     )

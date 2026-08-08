@@ -17,10 +17,11 @@ class RedBookEditorApiClient {
   Future<http.Response> getLiveHealth() =>
       _client.get(Uri.parse('$baseUrl/health/live'));
 
-  Future<NoteDraft> generateNote({
+  Future<StyledNoteResponse> generateNote({
     required String accountId,
     required String columnId,
     required SourceExperience source,
+    required StyleForm form,
   }) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/api/v1/notes/generate'),
@@ -28,13 +29,31 @@ class RedBookEditorApiClient {
       body: jsonEncode({
         'account_id': accountId,
         'column_id': columnId,
+        'form': styleFormToApi(form),
         'source': source.toJson(),
       }),
     );
     if (response.statusCode >= 400) {
       throw ApiRequestException(response.statusCode, response.body);
     }
-    return NoteDraft.fromJson(
+    return StyledNoteResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<StyledNoteResponse> restyleNote({
+    required NoteDraft draft,
+    required StyleForm form,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/v1/notes/style'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({'draft': draft.toJson(), 'form': styleFormToApi(form)}),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return StyledNoteResponse.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }
@@ -42,11 +61,16 @@ class RedBookEditorApiClient {
   Future<NoteDraft> regenerateField({
     required NoteDraft draft,
     required String field,
+    StyleForm? form,
   }) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/api/v1/notes/regenerate-field'),
       headers: {'content-type': 'application/json'},
-      body: jsonEncode({'draft': draft.toJson(), 'field': field}),
+      body: jsonEncode({
+        'draft': draft.toJson(),
+        'field': field,
+        if (form != null) 'form': styleFormToApi(form),
+      }),
     );
     if (response.statusCode >= 400) {
       throw ApiRequestException(response.statusCode, response.body);

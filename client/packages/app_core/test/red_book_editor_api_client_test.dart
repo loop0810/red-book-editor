@@ -32,6 +32,19 @@ const _draftJson = {
   'updated_at': '2026-08-05T00:00:00Z',
 };
 
+const _styledResponseJson = {
+  'draft': _draftJson,
+  'agent_trace': [
+    {
+      'order': 1,
+      'kind': 'tool',
+      'label': 'load_style_profile',
+      'summary': '读取经验档案',
+    },
+    {'order': 2, 'kind': 'model', 'label': 'model', 'summary': '完成自评'},
+  ],
+};
+
 RedBookEditorApiClient _client(
   Future<http.Response> Function(http.Request request) handler,
 ) {
@@ -48,7 +61,7 @@ void main() {
       final client = _client((request) async {
         requests.add(request);
         return http.Response(
-          jsonEncode(_draftJson),
+          jsonEncode(_styledResponseJson),
           200,
           headers: {'content-type': 'application/json'},
         );
@@ -61,10 +74,57 @@ void main() {
           scenario: '睡前哭闹',
           actions: ['固定绘本时间'],
         ),
+        form: StyleForm.experience,
       );
       final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
       expect(body['account_id'], _accountId);
       expect(body['column_id'], _columnId);
+      expect(body['form'], 'experience');
+    });
+
+    test('generateNote parses styled response with agent trace', () async {
+      final client = _client((request) async {
+        return http.Response(
+          jsonEncode(_styledResponseJson),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final result = await client.generateNote(
+        accountId: _accountId,
+        columnId: _columnId,
+        source: const SourceExperience(
+          babyMonth: 19,
+          scenario: '睡前哭闹',
+          actions: ['固定绘本时间'],
+        ),
+        form: StyleForm.popularScience,
+      );
+      expect(result.draft.noteId, '11111111-1111-1111-1111-111111111111');
+      expect(result.agentTrace, hasLength(2));
+      expect(result.agentTrace.first.label, 'load_style_profile');
+    });
+
+    test('restyleNote posts draft and form to the style endpoint', () async {
+      final requests = <http.Request>[];
+      final client = _client((request) async {
+        requests.add(request);
+        return http.Response(
+          jsonEncode(_styledResponseJson),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final draft = NoteDraft.fromJson(_draftJson);
+      final result = await client.restyleNote(
+        draft: draft,
+        form: StyleForm.advertorial,
+      );
+      expect(requests.single.url.path, '/api/v1/notes/style');
+      final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
+      expect(body['form'], 'advertorial');
+      expect((body['draft'] as Map<String, dynamic>)['note_id'], draft.noteId);
+      expect(result.agentTrace, isNotEmpty);
     });
 
     test('listNotes uses the account-scoped path', () async {
@@ -110,7 +170,7 @@ void main() {
       final client = _client((request) async {
         requests.add(request);
         return http.Response(
-          jsonEncode(_draftJson),
+          jsonEncode(_styledResponseJson),
           200,
           headers: {'content-type': 'application/json'},
         );
@@ -126,6 +186,7 @@ void main() {
           notes: '补充说明',
           assetIds: ['a1'],
         ),
+        form: StyleForm.experience,
       );
       final source =
           jsonDecode(requests.single.body)['source'] as Map<String, dynamic>;
@@ -168,9 +229,14 @@ void main() {
         );
       });
       final draft = NoteDraft.fromJson(_draftJson);
-      final result = await client.regenerateField(draft: draft, field: 'title');
+      final result = await client.regenerateField(
+        draft: draft,
+        field: 'title',
+        form: StyleForm.experience,
+      );
       final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
       expect(body['field'], 'title');
+      expect(body['form'], 'experience');
       expect((body['draft'] as Map<String, dynamic>)['note_id'], draft.noteId);
       expect(result.titleCandidates, ['新的标题']);
       expect(result.body, '宝宝19个月时，遇到了睡前哭闹。');

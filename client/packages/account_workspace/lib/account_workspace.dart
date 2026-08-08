@@ -9,11 +9,11 @@ class AccountWorkspacePage extends StatefulWidget {
 
 class _AccountWorkspacePageState extends State<AccountWorkspacePage> {
   final _positioningController = TextEditingController(
-    text: '记录0～2岁宝宝的真实成长和家庭育儿日常',
+    text: '记录备孕、孕检到育儿全程的新手爸妈日常',
   );
   final _toneController = TextEditingController(text: '自然、具体、像朋友聊天');
   int _babyMonth = 19;
-  final _columns = <String>['日常育儿经验', '作息与睡眠', '辅食与吃饭', '亲子游戏', '绘本和玩具体验'];
+  final _columns = <String>['科普', '经验', '软文'];
 
   @override
   void dispose() {

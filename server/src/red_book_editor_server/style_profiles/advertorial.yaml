@@ -1,0 +1,26 @@
+form: advertorial
+display_name: 软文
+hooks:
+  - "痛点故事开头（半夜高烧不退，吃了药也不管用）"
+  - "转折惊喜（结果第二天就审核通过了）"
+structures:
+  - name: 故事种草
+    sequence: [痛点故事, 过程细节, 产品/方案出现, 结果数据, 品牌引导]
+  - name: 对比安利
+    sequence: [问题引入, 尝试对比, 推荐方案, 成本/结果, 引导互动]
+tone:
+  person: 第一人称分享者
+  words: [没想到, 真的牛, 分担, 压力, 省心]
+  forbidden: [绝对, 第一, 唯一]
+rich_text:
+  emoji_rules: "每段不超过 2 个 emoji"
+  separators: ["|", "•"]
+  tag_count_range: [5, 10]
+tags:
+  generic: [宝妈分享, 生活记录, 经验分享]
+  precise: [热性惊厥, 住院, 理赔]
+  trending: [好医保, 少儿医疗, 育儿经验, 宝妈日常]
+cover:
+  pattern: "大字短句：痛点+结果"
+  examples: ["热性惊厥太吓人了，宝宝住院花了3800多"]
+cta: [有同样经历的宝妈可以了解一下, 分享给需要的人]

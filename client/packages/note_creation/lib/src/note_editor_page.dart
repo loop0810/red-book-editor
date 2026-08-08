@@ -11,6 +11,8 @@ class NoteEditorPage extends StatefulWidget {
     this.onRegenerateField,
     this.onSaveDraft,
     this.loadVersions,
+    this.agentTrace = const [],
+    this.styleForm,
     super.key,
   });
 
@@ -19,6 +21,8 @@ class NoteEditorPage extends StatefulWidget {
   final RegenerateField? onRegenerateField;
   final SaveDraft? onSaveDraft;
   final LoadVersions? loadVersions;
+  final List<AgentTraceStep> agentTrace;
+  final StyleForm? styleForm;
 
   @override
   State<NoteEditorPage> createState() => _NoteEditorPageState();
@@ -144,7 +148,11 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     }
     setState(() => _regeneratingField = field);
     try {
-      final regenerated = await onRegenerate(_draftFromFields(), field);
+      final regenerated = await onRegenerate(
+        _draftFromFields(),
+        field,
+        form: widget.styleForm,
+      );
       if (!mounted) return;
       setState(() => _applyDraft(regenerated));
       _showSnackBar('已重新生成${_fieldLabel(field)}');
@@ -289,6 +297,25 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     );
   }
 
+  String _traceLabel(AgentTraceStep step) {
+    switch (step.label) {
+      case 'load_style_profile':
+        return '读取风格档案';
+      case 'suggest_tags':
+        return '生成话题建议';
+      case 'critique_draft':
+        return '自评草稿';
+      case 'finalize_note':
+        return '确认最终输出';
+      case 'model':
+        return '模型思考';
+      case 'stub_fallback':
+        return '未调用模型';
+      default:
+        return step.label;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final warningFindings = _draft.reviewFindings
@@ -323,6 +350,31 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
               child: const ListTile(
                 leading: Icon(Icons.info_outline),
                 title: Text('有提示级问题，发布前请人工确认'),
+              ),
+            ),
+          if (widget.agentTrace.isNotEmpty)
+            Card(
+              child: ExpansionTile(
+                leading: const Icon(Icons.psychology),
+                title: const Text('Agent 执行过程'),
+                subtitle: Text('共 ${widget.agentTrace.length} 步'),
+                children: [
+                  for (final step in widget.agentTrace)
+                    ListTile(
+                      dense: true,
+                      leading: Icon(
+                        step.kind == 'tool'
+                            ? Icons.build_circle_outlined
+                            : Icons.psychology_outlined,
+                      ),
+                      title: Text('${step.order}. ${_traceLabel(step)}'),
+                      subtitle: Text(
+                        step.summary,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
               ),
             ),
           TextField(

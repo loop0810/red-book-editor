@@ -1,0 +1,27 @@
+form: experience
+display_name: 经验
+hooks:
+  - "事件 + 数字（宝宝突发40°C高烧，两进急诊）"
+  - "情绪冲击（热性惊厥太吓人了）"
+  - "时间/阶段标记（7月的病毒来势汹汹）"
+structures:
+  - name: 时间线复盘
+    sequence: [钩子标题, 背景铺垫, 时间线记录, 经验要点, 碎碎念/祝愿]
+  - name: 经历叙述
+    sequence: [事件开头, 过程细节, 情绪起伏, 结果, 给同路人的话]
+tone:
+  person: 第一人称真实经历
+  words: [当时, 真的, 吓, 终于, 后来, 慢慢, 别慌]
+  forbidden: []
+rich_text:
+  emoji_rules: "正文可用 2-4 个情绪 emoji，避免过度"
+  separators: ["|", "·", "1", "2"]
+  tag_count_range: [4, 12]
+tags:
+  generic: [育儿日常, 宝妈分享, 亲子日常, 成长记录]
+  precise: [宝宝发烧, 新手宝妈, 宝宝护理经验, 周岁宝宝]
+  trending: [发烧退退退, 宝宝退烧, 幼儿急疹, 育儿经验]
+cover:
+  pattern: "大字短句：事件+情绪 或 数字+事件"
+  examples: ["热性惊厥太吓人了，宝宝住院花了3800多", "宝宝突发40°C高烧 | 两进急诊"]
+cta: [希望所有宝宝都健健康康, 有类似经历的宝妈可以一起聊聊]

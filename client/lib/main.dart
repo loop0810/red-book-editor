@@ -51,9 +51,9 @@ class WorkbenchHomePage extends ConsumerWidget {
       MaterialPageRoute(
         builder: (_) => NoteEditorPage(
           draft: draft,
-          onRegenerateField: (current, field) => ref
+          onRegenerateField: (current, field, {form}) => ref
               .read(apiClientProvider)
-              .regenerateField(draft: current, field: field),
+              .regenerateField(draft: current, field: field, form: form),
           onSaveDraft: (current) =>
               ref.read(apiClientProvider).saveNote(draft: current),
           loadVersions: (noteId) =>
@@ -102,12 +102,13 @@ class WorkbenchHomePage extends ConsumerWidget {
                 Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => NoteCreationPage(
-                      generate: (source) => ref
+                      generate: (source, form) => ref
                           .read(apiClientProvider)
                           .generateNote(
                             accountId: _accountId,
                             columnId: _defaultColumnId,
                             source: source,
+                            form: form,
                           ),
                       uploadAsset: (filePath) => ref
                           .read(apiClientProvider)
@@ -115,16 +116,19 @@ class WorkbenchHomePage extends ConsumerWidget {
                             accountId: _accountId,
                             filePath: filePath,
                           ),
-                      onDraftGenerated: (draft) async {
+                      onDraftGenerated: (response, selectedForm) async {
                         await Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => NoteEditorPage(
-                              draft: draft,
-                              onRegenerateField: (current, field) => ref
+                              draft: response.draft,
+                              agentTrace: response.agentTrace,
+                              styleForm: selectedForm,
+                              onRegenerateField: (current, field, {form}) => ref
                                   .read(apiClientProvider)
                                   .regenerateField(
                                     draft: current,
                                     field: field,
+                                    form: form,
                                   ),
                               onSaveDraft: (current) => ref
                                   .read(apiClientProvider)
@@ -132,8 +136,11 @@ class WorkbenchHomePage extends ConsumerWidget {
                               loadVersions: (noteId) => ref
                                   .read(apiClientProvider)
                                   .listNoteVersions(noteId: noteId),
-                              onPublish: () =>
-                                  _openPublishRecord(context, ref, draft),
+                              onPublish: () => _openPublishRecord(
+                                context,
+                                ref,
+                                response.draft,
+                              ),
                             ),
                           ),
                         );

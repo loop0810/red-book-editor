@@ -4,6 +4,8 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
+from pydantic import BaseModel
+
 from red_book_editor_server.domain.contracts import NoteDraftDto, SourceExperienceDto
 
 
@@ -21,3 +23,33 @@ class NoteRepository(Protocol):
     async def get(self, note_id: UUID) -> NoteDraftDto | None: ...
 
     async def list_for_account(self, account_id: UUID) -> Sequence[NoteDraftDto]: ...
+
+
+class ToolCall(BaseModel):
+    """模型发起的工具调用。"""
+
+    id: str
+    name: str
+    arguments: str = "{}"
+
+
+class ModelResponse(BaseModel):
+    """模型网关的统一响应：纯文本、工具调用，或两者都有。"""
+
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
+
+
+class ModelGatewayError(RuntimeError):
+    """模型网关错误：超时、服务不可达或 API 返回错误。"""
+
+
+class ModelGateway(Protocol):
+    """模型网关端口，屏蔽具体模型供应商的消息与工具调用协议。"""
+
+    async def chat(
+        self,
+        messages: list[dict[str, object]],
+        *,
+        tools: list[dict[str, object]] | None = None,
+    ) -> ModelResponse: ...

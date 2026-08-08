@@ -10,33 +10,42 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from red_book_editor_server.app.dependencies import database_session
 from red_book_editor_server.app.config import get_settings
+from red_book_editor_server.app.dependencies import build_model_gateway, database_session
+from red_book_editor_server.domain.agent import AgentRunError
 from red_book_editor_server.domain.contracts import (
+    AssetDto,
     DraftVersionDto,
     NoteDraftDto,
     NoteStatus,
     PublishRecordDto,
     ReviewResultDto,
     SourceExperienceDto,
-    AssetDto,
+    StyleForm,
 )
+from red_book_editor_server.domain.ports import ModelGatewayError
 from red_book_editor_server.infrastructure.models import (
     AccountModel,
+    AssetModel,
     ContentColumnModel,
     DraftVersionModel,
     NoteModel,
     PublishRecordModel,
-    AssetModel,
 )
 from red_book_editor_server.modules.content_workflow.generator import StubContentGenerator
 from red_book_editor_server.modules.content_workflow.review import review_draft
+from red_book_editor_server.modules.content_workflow.styling.agent import (
+    finalize_to_note_draft,
+    style_draft,
+)
+from red_book_editor_server.modules.content_workflow.styling.models import FinalizeArgs
 
 router = APIRouter(tags=["notes"])
 
 
 class CreateNoteRequest(BaseModel):
     column_id: UUID
+    form: StyleForm | None = None
     source: SourceExperienceDto
 
 
@@ -208,42 +217,78 @@ async def create_note(
     request: CreateNoteRequest,
     session: AsyncSession = Depends(database_session),
 ) -> NoteDraftDto:
-    if await session.get(AccountModel, account_id) is None:
+    account = await session.get(AccountModel, account_id)
+    if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
     column = await session.get(ContentColumnModel, request.column_id)
     if column is None or column.account_id != account_id or not column.enabled:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="column_not_found")
-    draft = await StubContentGenerator().generate(
-        request.source,
-        account_id=account_id,
-        column_id=request.column_id,
+    settings = get_settings()
+    style_marker: str | None = None
+    if request.form is not None and settings.model_provider == "deepseek":
+        try:
+            result = await style_draft(
+                build_model_gateway(settings),
+                source=request.source,
+                neutral_draft=None,
+                form=request.form,
+                account_context=account.positioning,
+                column_context=column.description,
+            )
+        except (AgentRunError, ModelGatewayError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="content_generation_failed",
+            ) from error
+        finalized = result.result
+        if not isinstance(finalized, FinalizeArgs):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="content_generation_failed",
+            )
+        draft = finalize_to_note_draft(
+            finalized,
+            account_id=account_id,
+            column_id=request.column_id,
+            source=request.source,
+        )
+        review = None
+        style_marker = request.form.value
+    else:
+        draft = await StubContentGenerator().generate(
+            request.source,
+            account_id=account_id,
+            column_id=request.column_id,
+        )
+        review = await review_draft(draft)
+        draft = draft.model_copy(
+            update={
+                "status": NoteStatus.NEEDS_REVIEW if not review.passed else NoteStatus.READY,
+                "review": review,
+            }
+        )
+    content = draft.model_dump(
+        mode="json",
+        exclude={
+            "note_id",
+            "account_id",
+            "column_id",
+            "status",
+            "source",
+            "review",
+            "updated_at",
+        },
     )
-    review = await review_draft(draft)
-    draft = draft.model_copy(
-        update={
-            "status": NoteStatus.NEEDS_REVIEW if not review.passed else NoteStatus.READY,
-            "review": review,
-        }
-    )
+    if style_marker is not None:
+        content["style_form"] = style_marker
     note = NoteModel(
         id=draft.note_id,
         account_id=account_id,
         column_id=request.column_id,
         status=draft.status.value,
         source=request.source.model_dump(mode="json"),
-        content=draft.model_dump(
-            mode="json",
-            exclude={
-                "note_id",
-                "account_id",
-                "column_id",
-                "status",
-                "source",
-                "review",
-                "updated_at",
-            },
-        ),
-        review=review.model_dump(mode="json"),
+        content=content,
+        review=review.model_dump(mode="json") if review is not None else None,
     )
     session.add(note)
     await session.flush()
@@ -294,9 +339,13 @@ async def update_note(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note_not_found")
     content = payload.model_dump()
     note.content = content
-    review = await review_draft(note_dto(note))
-    note.status = NoteStatus.NEEDS_REVIEW if not review.passed else NoteStatus.READY
-    note.review = review.model_dump(mode="json")
+    if content.get("style_form"):
+        note.status = NoteStatus.READY
+        note.review = None
+    else:
+        review = await review_draft(note_dto(note))
+        note.status = NoteStatus.NEEDS_REVIEW if not review.passed else NoteStatus.READY
+        note.review = review.model_dump(mode="json")
     next_version = 1
     versions = (
         (

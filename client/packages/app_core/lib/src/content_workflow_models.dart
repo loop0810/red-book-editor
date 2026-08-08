@@ -4,6 +4,41 @@ enum NoteStatus { draft, needsReview, ready, published, discarded }
 
 enum RiskLevel { none, warning, blocking }
 
+enum StyleForm { popularScience, experience, advertorial }
+
+String styleFormToApi(StyleForm form) {
+  switch (form) {
+    case StyleForm.popularScience:
+      return 'popular_science';
+    case StyleForm.experience:
+      return 'experience';
+    case StyleForm.advertorial:
+      return 'advertorial';
+  }
+}
+
+StyleForm styleFormFromApi(String value) {
+  switch (value) {
+    case 'popular_science':
+      return StyleForm.popularScience;
+    case 'advertorial':
+      return StyleForm.advertorial;
+    default:
+      return StyleForm.experience;
+  }
+}
+
+String styleFormDisplayName(StyleForm form) {
+  switch (form) {
+    case StyleForm.popularScience:
+      return '科普';
+    case StyleForm.experience:
+      return '经验';
+    case StyleForm.advertorial:
+      return '软文';
+  }
+}
+
 class SourceExperience {
   const SourceExperience({
     required this.babyMonth,
@@ -166,6 +201,46 @@ class NoteDraft {
       imageSuggestions: imageSuggestions ?? this.imageSuggestions,
       reviewFindings: reviewFindings ?? this.reviewFindings,
       updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+}
+
+class AgentTraceStep {
+  const AgentTraceStep({
+    required this.order,
+    required this.kind,
+    required this.label,
+    required this.summary,
+  });
+
+  final int order;
+  final String kind;
+  final String label;
+  final String summary;
+
+  factory AgentTraceStep.fromJson(Map<String, dynamic> json) {
+    return AgentTraceStep(
+      order: json['order'] as int,
+      kind: json['kind'] as String? ?? 'phase',
+      label: json['label'] as String? ?? '',
+      summary: json['summary'] as String? ?? '',
+    );
+  }
+}
+
+class StyledNoteResponse {
+  const StyledNoteResponse({required this.draft, required this.agentTrace});
+
+  final NoteDraft draft;
+  final List<AgentTraceStep> agentTrace;
+
+  factory StyledNoteResponse.fromJson(Map<String, dynamic> json) {
+    return StyledNoteResponse(
+      draft: NoteDraft.fromJson(json['draft'] as Map<String, dynamic>),
+      agentTrace: (json['agent_trace'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(AgentTraceStep.fromJson)
+          .toList(),
     );
   }
 }
