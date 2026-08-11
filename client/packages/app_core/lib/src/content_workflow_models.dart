@@ -7,6 +7,7 @@ enum RiskLevel { none, warning, blocking }
 enum StyleForm { popularScience, experience, advertorial }
 
 String styleFormToApi(StyleForm form) {
+  // Dart enum 使用 camelCase，HTTP 契约使用 snake_case；转换集中放在这里。
   switch (form) {
     case StyleForm.popularScience:
       return 'popular_science';
@@ -18,6 +19,7 @@ String styleFormToApi(StyleForm form) {
 }
 
 StyleForm styleFormFromApi(String value) {
+  // 对未知表达形式回退到 experience，避免服务端增加新值后客户端直接崩溃。
   switch (value) {
     case 'popular_science':
       return StyleForm.popularScience;
@@ -40,6 +42,7 @@ String styleFormDisplayName(StyleForm form) {
 }
 
 class SourceExperience {
+  // 这是跨端最重要的事实输入对象：用户写什么，Agent 就应该以它为事实边界。
   const SourceExperience({
     required this.babyMonth,
     required this.scenario,
@@ -57,6 +60,7 @@ class SourceExperience {
   final List<String> assetIds;
 
   Map<String, Object> toJson() => {
+    // 字段名必须和 docs/contracts 及 Python SourceExperienceDto 保持一致。
     'baby_month': babyMonth,
     'scenario': scenario,
     'actions': actions,
@@ -66,6 +70,7 @@ class SourceExperience {
   };
 
   factory SourceExperience.fromJson(Map<String, dynamic> json) {
+    // API 返回 JSON 后，在这里恢复为页面使用的 Dart model。
     return SourceExperience(
       babyMonth: json['baby_month'] as int,
       scenario: json['scenario'] as String,
@@ -93,6 +98,7 @@ class ReviewFinding {
 }
 
 class NoteDraft {
+  // NoteDraft 同时包含来源事实、生成字段、审核结果和版本时间，是编辑器的核心状态。
   const NoteDraft({
     required this.noteId,
     required this.accountId,
@@ -124,6 +130,7 @@ class NoteDraft {
   final String updatedAt;
 
   factory NoteDraft.fromJson(Map<String, dynamic> json) {
+    // fromJson 负责把服务端完整响应拆成类型安全对象；缺省字段提供向后兼容。
     return NoteDraft(
       noteId: json['note_id'] as String,
       accountId: json['account_id'] as String,
@@ -145,6 +152,7 @@ class NoteDraft {
   }
 
   Map<String, Object?> toJson() => {
+    // 保存或重生成时，编辑器把当前 draft 再编码回 API 契约。
     'note_id': noteId,
     'account_id': accountId,
     'column_id': columnId,
@@ -187,6 +195,7 @@ class NoteDraft {
     List<ReviewFinding>? reviewFindings,
     String? updatedAt,
   }) {
+    // copyWith 用于局部修改：只替换用户刚编辑的字段，其他字段沿用原对象。
     return NoteDraft(
       noteId: noteId,
       accountId: accountId,
@@ -206,6 +215,7 @@ class NoteDraft {
 }
 
 class AgentTraceStep {
+  // trace 是可展示的执行摘要，不是模型的完整思维过程，也不参与生成结果计算。
   const AgentTraceStep({
     required this.order,
     required this.kind,
@@ -219,6 +229,7 @@ class AgentTraceStep {
   final String summary;
 
   factory AgentTraceStep.fromJson(Map<String, dynamic> json) {
+    // 服务端按 order 返回步骤，编辑器据此展示“读取档案/自评/定稿”等阶段。
     return AgentTraceStep(
       order: json['order'] as int,
       kind: json['kind'] as String? ?? 'phase',
@@ -229,6 +240,7 @@ class AgentTraceStep {
 }
 
 class StyledNoteResponse {
+  // 生成接口的组合响应：draft 给编辑器，agentTrace 给调试/学习面板。
   const StyledNoteResponse({required this.draft, required this.agentTrace});
 
   final NoteDraft draft;
@@ -322,6 +334,7 @@ class DownloadedAsset {
 }
 
 List<ReviewFinding> _reviewFindingsFromJson(Object? value) {
+  // review 可能为空；客户端把它统一转换成列表，页面只需判断风险等级。
   final review = value is Map<String, dynamic> ? value : null;
   final findings = review?['findings'];
   if (findings is! List<dynamic>) return const [];
@@ -341,6 +354,7 @@ List<ReviewFinding> _reviewFindingsFromJson(Object? value) {
 }
 
 NoteStatus _noteStatusFromApi(String value) {
+  // 状态值是跨端契约的一部分，未知值安全回退为 draft。
   switch (value) {
     case 'needs_review':
       return NoteStatus.needsReview;
@@ -356,6 +370,7 @@ NoteStatus _noteStatusFromApi(String value) {
 }
 
 String _noteStatusToApi(NoteStatus status) {
+  // 保存草稿时把 Dart enum 转回 API 使用的字符串。
   switch (status) {
     case NoteStatus.needsReview:
       return 'needs_review';
@@ -371,6 +386,7 @@ String _noteStatusToApi(NoteStatus status) {
 }
 
 String _riskLevelToApi(RiskLevel level) {
+  // 审核风险等级同样需要在 Dart enum 和 JSON 字符串之间双向转换。
   switch (level) {
     case RiskLevel.blocking:
       return 'blocking';

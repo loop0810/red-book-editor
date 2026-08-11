@@ -33,6 +33,7 @@ router = APIRouter(prefix="/api/v1/notes", tags=["notes"])
 
 
 class GenerateNoteRequest(BaseModel):
+    # 这是 HTTP 层的输入契约：账号/栏目决定上下文，source 是事实，form 是文风。
     account_id: UUID
     column_id: UUID
     form: StyleForm
@@ -54,7 +55,8 @@ class RegenerateFieldRequest(BaseModel):
 async def generate_note(request: GenerateNoteRequest) -> StyledNoteResponseDto:
     settings = get_settings()
     if settings.model_provider != "deepseek":
-        # stub 分支用于本地开发: 不请求模型, 只生成可编辑的中性草稿。
+        # stub 分支用于本地开发：不请求模型，只生成可编辑的中性草稿。
+        # 这样 Flutter 可以在没有 API key 或网络时先联调页面和数据结构。
         draft = await _neutral_draft(
             account_id=request.account_id,
             column_id=request.column_id,
@@ -67,7 +69,8 @@ async def generate_note(request: GenerateNoteRequest) -> StyledNoteResponseDto:
             ),
         )
     try:
-        # 真实模型分支直接进入风格 Agent; Agent 完成后才回到 API 层组装 DTO。
+        # 真实模型分支进入风格 Agent。
+        # Agent 内部负责 prompt、工具循环和最终校验；本路由只负责组装输入和输出。
         result = await style_draft(
             build_model_gateway(settings),
             source=request.source,
@@ -79,12 +82,16 @@ async def generate_note(request: GenerateNoteRequest) -> StyledNoteResponseDto:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="content_generation_failed",
         ) from error
+    # AgentRunResult.result 已经通过 FinalizeArgs 校验；这里再做一次类型检查，
+    # 防止未来替换 Agent 实现后把错误对象直接返回给 API 客户端。
     finalized = result.result
     if not isinstance(finalized, FinalizeArgs):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="content_generation_failed",
         )
+    # FinalizeArgs 是 Agent 内部结构，NoteDraftDto 是对外 API 结构。
+    # 这个转换点把账号、栏目、来源和生成内容合并成客户端可编辑的草稿。
     draft = finalize_to_note_draft(
         finalized,
         account_id=request.account_id,
@@ -133,6 +140,8 @@ async def restyle_note(request: RestyleNoteRequest) -> StyledNoteResponseDto:
 async def regenerate_field(request: RegenerateFieldRequest) -> NoteDraftDto:
     settings = get_settings()
     if settings.model_provider == "deepseek" and request.form is not None:
+        # 当前实现会重新生成一份完整风格稿，再从中取出目标字段；
+        # field_map + model_copy 确保最终只覆盖用户请求的字段。
         try:
             result = await style_draft(
                 build_model_gateway(settings),
@@ -170,6 +179,8 @@ async def regenerate_field(request: RegenerateFieldRequest) -> NoteDraftDto:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="content_generation_failed",
             ) from error
+    # API 字段名和 NoteDraftDto 属性名不完全相同，因此集中维护映射，
+    # 避免把用户传入的 "title" 直接当成 Python 属性读取。
     field_map = {
         "title": "title_candidates",
         "body": "body",

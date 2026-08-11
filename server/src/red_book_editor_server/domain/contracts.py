@@ -47,6 +47,8 @@ class ContentColumnDto(BaseModel):
 
 
 class SourceExperienceDto(BaseModel):
+    # SourceExperience 是内容生成的事实源头；生成内容应能回溯到这里，
+    # 而不是把模型的推测当成用户真实经历。
     baby_month: int = Field(ge=0, le=240)
     scenario: str = Field(min_length=1)
     actions: list[str] = Field(min_length=1)
@@ -112,6 +114,8 @@ class StyleProfile(BaseModel):
 class AgentTraceStepDto(BaseModel):
     """API 层返回的 agent 步骤。"""
 
+    # trace 只用于展示/调试，不能当作业务结果，也不应承载完整模型消息。
+
     order: int
     kind: str
     label: str
@@ -121,11 +125,13 @@ class AgentTraceStepDto(BaseModel):
 class StyledNoteResponseDto(BaseModel):
     """风格转换响应：风格化草稿 + agent 逐步 trace。"""
 
+    # Flutter 收到这个对象后，一边把 draft 交给编辑器，一边可展示 trace 摘要。
     draft: NoteDraftDto
     agent_trace: list[AgentTraceStepDto] = Field(default_factory=list)
 
 
 class NoteDraftDto(BaseModel):
+    # NoteDraft 是跨端主数据对象：它把账号、栏目、来源事实和生成字段绑定在一起。
     note_id: UUID
     account_id: UUID
     column_id: UUID

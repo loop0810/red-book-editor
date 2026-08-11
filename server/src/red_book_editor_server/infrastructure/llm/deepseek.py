@@ -46,9 +46,13 @@ class DeepSeekModelGateway:
         *,
         tools: list[dict[str, object]] | None = None,
     ) -> ModelResponse:
+        # AgentRuntime 只依赖 ModelGateway，不知道这里具体是 DeepSeek。
+        # 适配器把统一的 messages/tools 转成供应商的 HTTP 请求。
         cache_key = self._cache_key(messages, tools)
         cached = self._get_cached(cache_key)
         if cached is not None:
+            # 相同请求直接复用成功响应，减少重复点击造成的成本。
+            # 评测 runner 会主动关闭缓存，避免把重复实验误当成独立采样。
             return cached
 
         url = f"{self._base_url}/chat/completions"
@@ -62,6 +66,7 @@ class DeepSeekModelGateway:
         last_error: Exception | None = None
         for _ in range(self._max_retries + 1):
             try:
+                # 每次尝试只在这里跨越网络边界；后面的 Agent 逻辑不处理 HTTP 细节。
                 if self._http_client is not None:
                     response = await self._http_client.post(url, headers=headers, json=payload)
                 else:

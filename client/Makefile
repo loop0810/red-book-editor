@@ -1,4 +1,7 @@
-.PHONY: format format-check analyze test package-test ios-build android-build
+.PHONY: format format-check analyze test package-test ios-build android-build run
+
+run:
+	NO_PROXY="localhost,127.0.0.1,::1" no_proxy="localhost,127.0.0.1,::1" flutter run
 
 format:
 	dart format .

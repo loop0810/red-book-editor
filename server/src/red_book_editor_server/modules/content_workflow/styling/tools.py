@@ -22,6 +22,8 @@ _EMOJI = re.compile(r"[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F]")
 
 
 def build_styling_tools() -> list[Tool]:
+    # Tool 是模型“可以请求什么”的声明；真正的 handler 仍由服务端执行。
+    # 这四个工具形成当前风格 Agent 的最小工作台：读档案、找话题、自评、定稿。
     return [
         Tool(
             name="load_style_profile",
@@ -95,12 +97,14 @@ def build_styling_tools() -> list[Tool]:
 
 
 async def load_style_profile_tool(args: dict[str, object]) -> str:
+    # 模型传入的是普通 JSON，先用 Pydantic 转成 StyleForm，避免无效形式进入业务层。
     form = StyleFormArg.model_validate(args).form
     profile = load_style_profile(form)
     return profile.model_dump_json()
 
 
 async def suggest_tags_tool(args: dict[str, object]) -> str:
+    # 话题建议目前来自版本化档案，不访问外部热点服务；因此结果可重复且容易测试。
     parsed = SuggestTagsArgs.model_validate(args)
     profile = load_style_profile(parsed.form)
     topic = parsed.topic
@@ -112,6 +116,7 @@ async def suggest_tags_tool(args: dict[str, object]) -> str:
 
 
 async def critique_draft_tool(args: dict[str, object]) -> str:
+    # critique 是确定性检查工具：它不让模型“自称通过”，而是由代码计算分数和问题。
     parsed = CritiqueArgs.model_validate(args)
     profile = load_style_profile(parsed.form)
     draft = parsed.draft
@@ -127,6 +132,7 @@ async def critique_draft_tool(args: dict[str, object]) -> str:
     issues.extend(fact_issues)
     issues.extend(rich_issues)
 
+    # 事实分数和各风格分项都达到门槛后，模型才被允许继续 finalize。
     passed = facts_score >= 4 and min(hook, structure, tone_score, rich_score) >= 3
     result = CritiqueResult(
         scores={
@@ -143,6 +149,8 @@ async def critique_draft_tool(args: dict[str, object]) -> str:
 
 
 async def finalize_note_tool(args: dict[str, object]) -> str:
+    # finalize 本身主要做结构化解析；真正的事实闸门还会在 styling/agent.py
+    # 的 final_validator 中再次执行，形成“工具约束 + 服务端校验”的两层保护。
     parsed = FinalizeArgs.model_validate(args)
     return parsed.model_dump_json()
 
@@ -180,6 +188,8 @@ def _score_tone(profile: StyleProfile, text: str) -> tuple[int, list[str]]:
 
 
 def _score_facts(source: SourceExperienceDto, text: str) -> tuple[int, list[str]]:
+    # 当前版本使用关键事实的文本匹配，优点是简单可解释，缺点是对同义改写不够宽容。
+    # 这正是后续引入 Source Fact Ledger 时需要替换/增强的地方。
     missing = [fact for fact in _required_facts(source) if fact not in text]
     issues = [f"来源事实缺失：{fact}" for fact in missing]
     return (5 if not missing else max(1, 5 - len(missing))), issues

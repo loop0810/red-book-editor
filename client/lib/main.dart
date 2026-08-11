@@ -7,6 +7,8 @@ import 'package:account_workspace/account_workspace.dart';
 import 'package:asset_library/asset_library.dart';
 import 'package:publish_records/publish_records.dart';
 
+// Riverpod 在这里负责把“如何创建 API Client”注入页面。
+// 页面只需要 ref.read(apiClientProvider)，不需要自己管理 http.Client 的生命周期。
 final apiClientProvider = Provider<RedBookEditorApiClient>(
   (ref) => RedBookEditorApiClient(),
 );
@@ -21,6 +23,7 @@ final _router = GoRouter(
 );
 
 void main() {
+  // ProviderScope 是 Riverpod 的根容器；放在最外层后，下面所有页面都能读取 provider。
   runApp(const ProviderScope(child: RedBookEditorApp()));
 }
 
@@ -104,6 +107,8 @@ class WorkbenchHomePage extends ConsumerWidget {
                     builder: (_) => NoteCreationPage(
                       generate: (source, form) => ref
                           .read(apiClientProvider)
+                          // 这里是客户端主链路的起点：页面表单产生 source/form，
+                          // API Client 将它们编码成 POST /notes/generate 请求。
                           .generateNote(
                             accountId: _accountId,
                             columnId: _defaultColumnId,
@@ -117,6 +122,8 @@ class WorkbenchHomePage extends ConsumerWidget {
                             filePath: filePath,
                           ),
                       onDraftGenerated: (response, selectedForm) async {
+                        // 服务端返回的是 StyledNoteResponse：draft 是可编辑内容，
+                        // agentTrace 是可展示的执行摘要；两者一起交给编辑器页面。
                         await Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => NoteEditorPage(

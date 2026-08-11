@@ -79,14 +79,15 @@ class AgentRuntime:
         tools: list[Tool],
         final_validator: Callable[[str], FinalValidation],
     ) -> AgentRunResult:
-        # messages 是 agent 的“短期记忆”: 每次模型调用都会看到完整历史,
-        # 包括用户事实、模型上一次的工具请求, 以及工具返回的结果。
+        # messages 是 Agent 的“短期记忆”：每次模型调用都会看到完整历史，
+        # 包括用户事实、模型上一次的工具请求，以及工具返回的结果。
+        # Agent 不会自动拥有长期记忆；需要持久化的内容必须由业务层显式传入。
         messages: list[dict[str, object]] = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
         trace: list[AgentTraceStep] = []
-        # 工具 schema 发给模型, tool_map 留在服务端; 模型只能提出调用请求,
+        # 工具 schema 发给模型，tool_map 留在服务端；模型只能提出调用请求，
         # 真正执行哪个 Python handler 仍由服务端控制。
         tool_schemas = [self._tool_schema(tool) for tool in tools]
         tool_map = {tool.name: tool for tool in tools}
@@ -94,6 +95,8 @@ class AgentRuntime:
         final_attempts = 0
 
         for _ in range(self._max_steps):
+            # 一轮循环只有两种结果：模型要求工具，或模型尝试提交最终答案。
+            # max_steps 是保险丝，防止模型一直调用工具或反复修订。
             # 一轮 loop = 给模型当前上下文 -> 等模型决定下一步。
             # 模型可能要求工具, 也可能认为已经完成并直接返回最终 JSON。
             response = await self._gateway.chat(messages, tools=tool_schemas)
@@ -108,6 +111,8 @@ class AgentRuntime:
             )
 
             if response.tool_calls:
+                # 工具调用先在本地执行，结果再以 role=tool 回填给模型，
+                # 下一轮模型才能根据工具结果继续决策。
                 # 先把 assistant 的工具请求写回历史。下一次模型调用时,
                 # 模型才知道自己刚才要求了什么工具。
                 messages.append(
@@ -143,7 +148,7 @@ class AgentRuntime:
                     )
                 continue
 
-            # 没有工具调用, 说明模型尝试结束本轮。这里不能直接相信文本,
+            # 没有工具调用，说明模型尝试结束本轮。这里不能直接相信文本，
             # 必须交给业务方提供的 validator 做 JSON、字段和事实校验。
             validation = final_validator(response.content or "")
             if validation.ok:
@@ -166,6 +171,8 @@ class AgentRuntime:
         raise AgentRunError("agent_max_steps", trace=trace)
 
     async def _execute_tool(self, tool_map: dict[str, Tool], call: ToolCall) -> str:
+        # 模型只能提交工具名和 JSON 参数；这里负责把请求路由到白名单 handler，
+        # 并把参数错误/handler 异常转换成模型可以理解的文本结果。
         tool = tool_map.get(call.name)
         if tool is None:
             return f'error: unknown tool "{call.name}"'
@@ -182,6 +189,7 @@ class AgentRuntime:
 
     @staticmethod
     def _tool_schema(tool: Tool) -> dict[str, object]:
+        # schema 发给模型用于“决定要不要调用”，handler 不会随 schema 暴露给模型。
         return {
             "type": "function",
             "function": {
@@ -200,6 +208,7 @@ class AgentRuntime:
         }
 
     def _summarize(self, text: str, limit: int | None = None) -> str:
+        # trace 只保存压缩摘要，避免把完整 prompt、用户正文或模型响应写入调试结果。
         compact = " ".join(text.split())
         if len(compact) <= (limit or self._summary_limit):
             return compact

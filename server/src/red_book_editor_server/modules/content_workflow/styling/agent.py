@@ -29,6 +29,8 @@ from red_book_editor_server.modules.content_workflow.styling.profiles import loa
 from red_book_editor_server.modules.content_workflow.styling.tools import build_styling_tools
 
 SYSTEM_PROMPT = (
+    # 这是业务 Agent 的“行为合同”：模型可以自由组织语言，
+    # 但必须遵守事实边界、工具顺序和最终 JSON 结构。
     "你是一位资深的小红书育儿内容运营专家，负责把用户的中性草稿改写成"
     "符合所选表达形式的小红书风格文案。\n\n"
     "规则：\n"
@@ -60,7 +62,7 @@ async def style_draft(
     account_context: str = "",
     column_context: str = "",
 ) -> AgentRunResult:
-    # 这里是业务 Agent 的入口: 准备业务上下文和工具; 真正的通用循环
+    # 这里是业务 Agent 的入口：准备业务上下文和工具；真正的通用循环
     # 放在 domain/agent.py，因此“写育儿文案”和“如何循环”彼此解耦。
     profile = load_style_profile(form)
     runtime = AgentRuntime(gateway, max_steps=12)
@@ -113,6 +115,8 @@ def _build_user_prompt(
     account_context: str,
     column_context: str,
 ) -> str:
+    # system prompt 规定 Agent 的行为；这里的 user prompt 提供本次请求的数据。
+    # 二者分开后，换账号/栏目/经历不会修改全局规则。
     parts = [
         f"表达形式：{profile_display}（{form.value}）",
         f"账号定位：{account_context or '备孕-孕检-育儿全程记录的新手爸妈账号'}",
@@ -131,8 +135,9 @@ def _make_final_validator(
     source: SourceExperienceDto, profile: StyleProfile
 ) -> Callable[[str], FinalValidation]:
     def validate(content: str) -> FinalValidation:
-        # 模型的最终回答只是字符串, 先解析成 FinalizeArgs, 再做服务端确定性检查。
-        # 这一步是模型输出进入业务对象前的最后一道闸门。
+        # 模型的最终回答只是字符串，先解析成 FinalizeArgs，再做服务端确定性检查。
+        # 这一步是模型输出进入业务对象前的最后一道闸门：prompt 不是安全边界，
+        # validator 才是服务端可以强制执行的边界。
         try:
             finalized = FinalizeArgs.model_validate(json.loads(_extract_json(content)))
         except (json.JSONDecodeError, ValidationError) as error:
@@ -149,6 +154,8 @@ def _make_final_validator(
 def _extract_json(content: str) -> str:
     """接受模型常见的 ```json 包裹或前后说明文字。"""
 
+    # 模型有时会在 JSON 前后附加解释或 Markdown fence；先剥离包装，
+    # 再交给 Pydantic 做严格结构校验，而不是直接信任整段文本。
     stripped = content.strip()
     if stripped.startswith("```"):
         lines = stripped.splitlines()

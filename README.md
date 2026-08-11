@@ -20,7 +20,14 @@
 ```sh
 cd client
 flutter pub get
-flutter run
+make run
+```
+
+`make run` 会将本机 Flutter 调试服务（`localhost`、`127.0.0.1` 和 `::1`）加入 `NO_PROXY`，避免终端代理拦截调试 WebSocket。若使用 `flutter run`，请先设置：
+
+```sh
+export NO_PROXY="localhost,127.0.0.1,::1"
+export no_proxy="$NO_PROXY"
 ```
 
 服务端：

@@ -14,6 +14,8 @@ class RedBookEditorApiClient {
   final http.Client _client;
   final String baseUrl;
 
+  // 这个类是 Flutter 与 FastAPI 之间的边界：
+  // 上层页面使用 Dart model，不直接拼 URL 或解析 JSON。
   Future<http.Response> getLiveHealth() =>
       _client.get(Uri.parse('$baseUrl/health/live'));
 
@@ -23,6 +25,8 @@ class RedBookEditorApiClient {
     required SourceExperience source,
     required StyleForm form,
   }) async {
+    // SourceExperience 是用户提供的事实来源，form 是期望的表达形式。
+    // 服务端会根据这两个输入生成草稿，而不是客户端自己调用模型。
     final response = await _client.post(
       Uri.parse('$baseUrl/api/v1/notes/generate'),
       headers: {'content-type': 'application/json'},
@@ -37,6 +41,7 @@ class RedBookEditorApiClient {
       throw ApiRequestException(response.statusCode, response.body);
     }
     return StyledNoteResponse.fromJson(
+      // JSON 在 API 边界只解析一次，之后页面使用类型安全的 Dart 对象。
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }
@@ -45,6 +50,8 @@ class RedBookEditorApiClient {
     required NoteDraft draft,
     required StyleForm form,
   }) async {
+    // 局部重生成仍携带完整 draft，但服务端只应该更新 field 指定的字段。
+    // 这样用户已经手动修改的其他字段不会被模型覆盖。
     final response = await _client.post(
       Uri.parse('$baseUrl/api/v1/notes/style'),
       headers: {'content-type': 'application/json'},

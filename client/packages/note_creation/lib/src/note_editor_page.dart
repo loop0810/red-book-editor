@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'note_creation_types.dart';
 
 class NoteEditorPage extends StatefulWidget {
+  // 编辑器接收的是服务端返回的 NoteDraft，而保存、重生成、版本读取等能力
+  // 都通过回调注入，因此页面可以独立运行在本地模式或真实 API 模式。
   const NoteEditorPage({
     required this.draft,
     this.onPublish,
@@ -55,12 +57,15 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   String? _regeneratingField;
 
   bool get _hasBlockingReview => _draft.reviewFindings.any(
+    // blocking 风险只影响“是否允许继续导出/发布”，不等于页面不能继续编辑。
     (finding) => finding.level == RiskLevel.blocking,
   );
 
   @override
   void initState() {
     super.initState();
+    // Controller 是输入框的临时 UI 状态，_draft 是跨请求的数据快照。
+    // 编辑时先改 Controller，保存/重生成时再通过 _draftFromFields 合并回模型。
     _draft = widget.draft;
     _titleController = TextEditingController(
       text: _draft.titleCandidates.isEmpty
@@ -84,6 +89,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   }
 
   NoteDraft _draftFromFields() {
+    // 把用户当前正在编辑的文本重新组装成请求对象，避免保存旧的 _draft 快照。
     return _draft.copyWith(
       titleCandidates: [_titleController.text.trim()],
       body: _bodyController.text.trim(),
@@ -96,6 +102,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   }
 
   void _applyDraft(NoteDraft draft) {
+    // 服务端返回新 draft 后，同时更新数据对象和四个 Controller，保持 UI 与模型一致。
     _draft = draft;
     _titleController.text = draft.titleCandidates.isEmpty
         ? draft.source.scenario
@@ -119,6 +126,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   }
 
   Future<void> _save() async {
+    // 没有注入服务端保存函数时，退化为本机版本快照；有函数时才 PUT 到服务端。
     if (widget.onSaveDraft == null) {
       setState(_recordLocalVersion);
       _showSnackBar('已保存到本机草稿');
@@ -141,6 +149,8 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   }
 
   Future<void> _regenerate(String field) async {
+    // 局部重生成只把 field 交给服务端；返回完整 NoteDraft 后由服务端/客户端保证
+    // 未选择的字段不被覆盖。
     final onRegenerate = widget.onRegenerateField;
     if (onRegenerate == null) {
       _showSnackBar('当前未接入局部重新生成');
@@ -179,6 +189,8 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   }
 
   Future<void> _showVersions() async {
+    // 版本历史有两条来源：服务端持久化版本 + 当前设备的本机快照。
+    // 服务端读取失败时仍展示本机版本，保证编辑体验可用。
     var serverVersions = <NoteDraftVersion>[];
     if (widget.loadVersions != null) {
       try {
@@ -268,6 +280,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   }
 
   Future<void> _copy(String value, String label) async {
+    // 复制是 V1 的手动发布边界：应用只写入系统剪贴板，不自动操作小红书。
     await Clipboard.setData(ClipboardData(text: value));
     if (mounted) {
       ScaffoldMessenger.of(
@@ -298,6 +311,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   }
 
   String _traceLabel(AgentTraceStep step) {
+    // 服务端 trace 使用稳定的机器 label；这里把它翻译成用户能看懂的中文阶段名。
     switch (step.label) {
       case 'load_style_profile':
         return '读取风格档案';

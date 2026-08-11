@@ -8,6 +8,8 @@ import 'note_creation_types.dart';
 import 'note_editor_page.dart';
 
 class NoteCreationPage extends StatefulWidget {
+  // 页面只负责收集输入和管理交互；真正的生成函数由外层 main.dart 注入。
+  // 这样 feature package 不需要知道 API Client 或具体网络实现。
   const NoteCreationPage({
     required this.generate,
     this.uploadAsset,
@@ -25,6 +27,7 @@ class NoteCreationPage extends StatefulWidget {
 }
 
 class _NoteCreationPageState extends State<NoteCreationPage> {
+  // Controller 保存输入框内容，_draftStore 保存“请求尚未完成时”的本地草稿。
   final _scenarioController = TextEditingController();
   final _actionsController = TextEditingController();
   final _observationsController = TextEditingController();
@@ -40,10 +43,12 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
   @override
   void initState() {
     super.initState();
+    // 页面重新打开时先恢复上次未完成的 SourceExperience。
     _restoreDraft();
   }
 
   Future<void> _restoreDraft() async {
+    // 恢复草稿是异步的，所以回写 UI 前必须确认 State 仍挂在 widget tree 上。
     final draft = await _draftStore.load();
     if (!mounted || draft == null) return;
     _scenarioController.text = draft.scenario;
@@ -59,6 +64,7 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
   }
 
   Future<void> _pickImages() async {
+    // 图片此时只有本地路径；点击生成时才会通过 widget.uploadAsset 上传到服务端。
     final picked = await _picker.pickMultiImage(imageQuality: 90);
     if (!mounted) return;
     setState(() {
@@ -80,6 +86,8 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
   }
 
   Future<void> _generate() async {
+    // 生成主链路：校验输入 → 上传素材 → 组装 SourceExperience → 保存本地草稿 → 请求 Agent。
+    // 在请求成功前不清除本地草稿，避免网络或模型失败导致用户输入丢失。
     if (_scenarioController.text.trim().isEmpty ||
         _actionsController.text.trim().isEmpty) {
       setState(() => _error = '请先填写发生了什么和你做了什么');
@@ -111,8 +119,10 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
         assetIds: assetIds,
       );
       await _draftStore.save(source);
+      // generate 是依赖注入进来的 Future：测试时可以替换成 fake，生产时由 API Client 实现。
       final response = await widget.generate(source, _selectedForm);
       await _draftStore.clear();
+      // 只有服务端生成成功才进入编辑器；response 同时携带 draft 和 agentTrace。
       if (mounted) {
         if (widget.onDraftGenerated != null) {
           await widget.onDraftGenerated!(response, _selectedForm);
