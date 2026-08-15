@@ -58,6 +58,14 @@ class _DraftListPageState extends State<DraftListPage> {
     }
   }
 
+  String _reviewLabel(NoteDraft draft) {
+    if (draft.reviewFindings.isEmpty) return '';
+    final hasBlocking = draft.reviewFindings.any(
+      (finding) => finding.level == RiskLevel.blocking,
+    );
+    return hasBlocking ? '有阻断风险' : '有审核提示';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -102,7 +110,12 @@ class _DraftListPageState extends State<DraftListPage> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   subtitle: Text(
-                    draft.body.isEmpty ? draft.source.scenario : draft.body,
+                    [
+                      if (draft.styleForm != null)
+                        '表达形式：${styleFormDisplayName(draft.styleForm!)}',
+                      if (_reviewLabel(draft).isNotEmpty) _reviewLabel(draft),
+                      draft.body.isEmpty ? draft.source.scenario : draft.body,
+                    ].join(' · '),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),

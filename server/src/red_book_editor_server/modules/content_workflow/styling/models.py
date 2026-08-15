@@ -42,3 +42,27 @@ class SuggestTagsArgs(BaseModel):
 
 class StyleFormArg(BaseModel):
     form: StyleForm
+
+
+class TitleFieldResult(BaseModel):
+    """标题字段重生成的唯一结构化结果。"""
+
+    title_candidates: list[str] = Field(min_length=1)
+
+
+class BodyFieldResult(BaseModel):
+    """正文单字段重生成结果。"""
+
+    body: str = Field(min_length=1)
+
+
+class HashtagsFieldResult(BaseModel):
+    """话题单字段重生成结果。"""
+
+    hashtags: list[str] = Field(min_length=1)
+
+
+class CoverCopyFieldResult(BaseModel):
+    """封面文案单字段重生成结果。"""
+
+    cover_copy: str = Field(min_length=1)

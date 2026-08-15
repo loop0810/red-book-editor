@@ -143,6 +143,8 @@ class NoteDraftDto(BaseModel):
     cover_copy: str = ""
     image_suggestions: list[str] = Field(default_factory=list)
     source: SourceExperienceDto
+    # 旧 JSONB 草稿可能没有该键，因此必须保持可空并兼容读取。
+    style_form: StyleForm | None = None
     review: ReviewResultDto | None = None
     updated_at: datetime
 
@@ -155,6 +157,7 @@ class DraftVersionDto(BaseModel):
     hashtags: list[str] = Field(default_factory=list)
     cover_copy: str = ""
     image_suggestions: list[str] = Field(default_factory=list)
+    style_form: StyleForm | None = None
     created_at: datetime
 
 

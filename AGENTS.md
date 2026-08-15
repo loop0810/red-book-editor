@@ -17,6 +17,11 @@
 - 数据库 schema 只能通过 Alembic migration 演进。
 - 领域逻辑不得直接依赖 FastAPI、SQLAlchemy 或具体模型 SDK。
 
+## Change 修复记录
+
+- 完成并归档修复 `docs/error/` 问题的 OpenSpec change 后，必须同步更新 `docs/error/change-fix-history.md`。
+- 记录必须包含关联问题、change 名称、实际改动、验证结果和未覆盖范围；不能只复制 proposal 或 tasks。
+
 ## 验证
 
 客户端：

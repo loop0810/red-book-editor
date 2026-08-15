@@ -98,6 +98,9 @@ class RedBookEditorApiClient {
         'hashtags': draft.hashtags,
         'cover_copy': draft.coverCopy,
         'image_suggestions': draft.imageSuggestions,
+        'style_form': draft.styleForm == null
+            ? null
+            : styleFormToApi(draft.styleForm!),
       }),
     );
     if (response.statusCode >= 400) {

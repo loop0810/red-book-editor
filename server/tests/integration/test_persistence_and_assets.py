@@ -129,7 +129,8 @@ def test_export_blocks_note_with_medication_review(client: TestClient) -> None:
 
     export = client.get(f"/api/v1/notes/{note_id}/export")
     assert export.status_code == 409
-    assert export.json()["detail"] == "blocking_review"
+    assert export.json()["detail"]["code"] == "blocking_review"
+    assert export.json()["detail"]["reasons"]
 
 
 @pytest.mark.integration

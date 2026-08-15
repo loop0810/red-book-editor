@@ -4,6 +4,7 @@ import re
 
 from red_book_editor_server.domain.contracts import (
     NoteDraftDto,
+    NoteStatus,
     ReviewFindingDto,
     ReviewResultDto,
     RiskLevel,
@@ -139,3 +140,19 @@ async def review_draft(draft: NoteDraftDto) -> ReviewResultDto:
     findings = list(findings_by_code.values())
     passed = not any(finding.level is RiskLevel.BLOCKING for finding in findings)
     return ReviewResultDto(passed=passed, findings=findings)
+
+
+def status_for_review(review: ReviewResultDto | None) -> NoteStatus:
+    """把审核结果集中映射为草稿状态。
+
+    ``passed`` 只表示没有 blocking；warning 仍然要求人工复核，
+    而没有审核结果绝不能被当成 ready。
+    """
+
+    if review is None:
+        return NoteStatus.NEEDS_REVIEW
+    if not review.passed or any(
+        finding.level in (RiskLevel.BLOCKING, RiskLevel.WARNING) for finding in review.findings
+    ):
+        return NoteStatus.NEEDS_REVIEW
+    return NoteStatus.READY

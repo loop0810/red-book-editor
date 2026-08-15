@@ -20,6 +20,7 @@ const _draftJson = {
   'hashtags': ['#育儿日常'],
   'cover_copy': '睡前哭闹',
   'image_suggestions': ['场景照片'],
+  'style_form': 'experience',
   'source': {
     'baby_month': 19,
     'scenario': '睡前哭闹',
@@ -240,6 +241,52 @@ void main() {
       expect((body['draft'] as Map<String, dynamic>)['note_id'], draft.noteId);
       expect(result.titleCandidates, ['新的标题']);
       expect(result.body, '宝宝19个月时，遇到了睡前哭闹。');
+    });
+
+    test('regenerateField can rely on the restored draft style form', () async {
+      final requests = <http.Request>[];
+      final client = _client((request) async {
+        requests.add(request);
+        return http.Response(
+          jsonEncode(_draftJson),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final draft = NoteDraft.fromJson(_draftJson);
+      await client.regenerateField(draft: draft, field: 'body');
+      final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
+      expect(body.containsKey('form'), isFalse);
+      expect(
+        (body['draft'] as Map<String, dynamic>)['style_form'],
+        'experience',
+      );
+    });
+
+    test('saveNote sends style form metadata', () async {
+      final requests = <http.Request>[];
+      final client = _client((request) async {
+        requests.add(request);
+        return http.Response(
+          jsonEncode(_draftJson),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final draft = NoteDraft.fromJson(_draftJson);
+      await client.saveNote(draft: draft);
+      final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
+      expect(body['style_form'], 'experience');
+    });
+
+    test('NoteDraft round-trips style form through JSON and copyWith', () {
+      final draft = NoteDraft.fromJson(_draftJson);
+      expect(draft.styleForm, StyleForm.experience);
+      expect(
+        draft.copyWith(styleForm: StyleForm.advertorial).styleForm,
+        StyleForm.advertorial,
+      );
+      expect(draft.toJson()['style_form'], 'experience');
     });
   });
 

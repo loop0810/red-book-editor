@@ -101,6 +101,7 @@ def finalize_to_note_draft(
         cover_copy=finalized.draft.cover_copy,
         image_suggestions=finalized.image_suggestions,
         source=source,
+        style_form=finalized.form,
         review=None,
         updated_at=datetime.now(UTC),
     )

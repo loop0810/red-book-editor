@@ -111,6 +111,7 @@ class NoteDraft {
     this.hashtags = const [],
     this.coverCopy = '',
     this.imageSuggestions = const [],
+    this.styleForm,
     this.reviewFindings = const [],
     this.updatedAt = '',
   });
@@ -126,6 +127,7 @@ class NoteDraft {
   final List<String> hashtags;
   final String coverCopy;
   final List<String> imageSuggestions;
+  final StyleForm? styleForm;
   final List<ReviewFinding> reviewFindings;
   final String updatedAt;
 
@@ -146,6 +148,9 @@ class NoteDraft {
       imageSuggestions:
           (json['image_suggestions'] as List<dynamic>? ?? const [])
               .cast<String>(),
+      styleForm: json['style_form'] is String
+          ? styleFormFromApi(json['style_form'] as String)
+          : null,
       reviewFindings: _reviewFindingsFromJson(json['review']),
       updatedAt: json['updated_at'] as String? ?? '',
     );
@@ -163,6 +168,7 @@ class NoteDraft {
     'hashtags': hashtags,
     'cover_copy': coverCopy,
     'image_suggestions': imageSuggestions,
+    'style_form': styleForm == null ? null : styleFormToApi(styleForm!),
     'source': source.toJson(),
     'review': reviewFindings.isEmpty
         ? null
@@ -192,6 +198,7 @@ class NoteDraft {
     List<String>? hashtags,
     String? coverCopy,
     List<String>? imageSuggestions,
+    StyleForm? styleForm,
     List<ReviewFinding>? reviewFindings,
     String? updatedAt,
   }) {
@@ -208,6 +215,7 @@ class NoteDraft {
       hashtags: hashtags ?? this.hashtags,
       coverCopy: coverCopy ?? this.coverCopy,
       imageSuggestions: imageSuggestions ?? this.imageSuggestions,
+      styleForm: styleForm ?? this.styleForm,
       reviewFindings: reviewFindings ?? this.reviewFindings,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -292,6 +300,7 @@ class NoteDraftVersion {
     this.hashtags = const [],
     this.coverCopy = '',
     this.imageSuggestions = const [],
+    this.styleForm,
     this.createdAt = '',
   });
 
@@ -302,6 +311,7 @@ class NoteDraftVersion {
   final List<String> hashtags;
   final String coverCopy;
   final List<String> imageSuggestions;
+  final StyleForm? styleForm;
   final String createdAt;
 
   factory NoteDraftVersion.fromJson(Map<String, dynamic> json) {
@@ -316,6 +326,9 @@ class NoteDraftVersion {
       imageSuggestions:
           (json['image_suggestions'] as List<dynamic>? ?? const [])
               .cast<String>(),
+      styleForm: json['style_form'] is String
+          ? styleFormFromApi(json['style_form'] as String)
+          : null,
       createdAt: json['created_at'] as String? ?? '',
     );
   }

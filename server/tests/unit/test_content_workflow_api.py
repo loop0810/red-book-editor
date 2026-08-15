@@ -6,11 +6,17 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from red_book_editor_server.domain.contracts import NoteDraftDto, NoteStatus, SourceExperienceDto
+from red_book_editor_server.domain.contracts import (
+    NoteDraftDto,
+    NoteStatus,
+    SourceExperienceDto,
+    StyleForm,
+)
 from red_book_editor_server.modules.content_workflow.generator import (
     ContentGenerationError,
     generate_with_retry,
 )
+from red_book_editor_server.modules.content_workflow.service import ContentWorkflowService
 
 
 def _source_payload(
@@ -24,24 +30,40 @@ def _source_payload(
     }
 
 
-def test_generate_note_returns_styled_response_with_stub_fallback(client: TestClient) -> None:
+def _draft_payload() -> dict[str, object]:
+    return {
+        "note_id": str(uuid4()),
+        "account_id": str(uuid4()),
+        "column_id": str(uuid4()),
+        "status": "ready",
+        "topic_angle": "19个月宝宝的出门记录",
+        "title_candidates": ["原来的标题"],
+        "body": "原来的正文",
+        "hashtags": ["#育儿日常"],
+        "cover_copy": "原来的封面",
+        "image_suggestions": ["场景照片"],
+        "source": _source_payload(scenario="出门", actions=["准备清单"]),
+        "style_form": "experience",
+        "review": {"passed": True, "findings": []},
+        "updated_at": "2026-08-05T00:00:00Z",
+    }
+
+
+@pytest.mark.asyncio
+async def test_generate_service_returns_reviewed_draft_with_style_form() -> None:
     account_id = uuid4()
     column_id = uuid4()
-    response = client.post(
-        "/api/v1/notes/generate",
-        json={
-            "account_id": str(account_id),
-            "column_id": str(column_id),
-            "form": "experience",
-            "source": _source_payload(actions=["固定绘本时间"]),
-        },
+    result = await ContentWorkflowService().generate(
+        account_id=account_id,
+        column_id=column_id,
+        form=StyleForm.EXPERIENCE,
+        source=SourceExperienceDto.model_validate(_source_payload(actions=["固定绘本时间"])),
     )
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["draft"]["status"] == "ready"
-    assert payload["draft"]["review"] is None
-    assert payload["draft"]["account_id"] == str(account_id)
-    assert payload["agent_trace"][0]["label"] == "stub_fallback"
+    assert result.draft.status == NoteStatus.READY
+    assert result.draft.review is not None
+    assert result.draft.style_form is StyleForm.EXPERIENCE
+    assert result.draft.account_id == account_id
+    assert result.agent_trace[0].label == "stub_fallback"
 
 
 def test_generate_note_requires_form(client: TestClient) -> None:
@@ -70,16 +92,7 @@ def test_generate_note_rejects_unknown_form(client: TestClient) -> None:
 
 
 def test_restyle_note_returns_draft_and_trace(client: TestClient) -> None:
-    draft_response = client.post(
-        "/api/v1/notes/generate",
-        json={
-            "account_id": str(uuid4()),
-            "column_id": str(uuid4()),
-            "form": "experience",
-            "source": _source_payload(),
-        },
-    )
-    draft = draft_response.json()["draft"]
+    draft = _draft_payload()
     response = client.post(
         "/api/v1/notes/style",
         json={"draft": draft, "form": "popular_science"},
@@ -88,21 +101,11 @@ def test_restyle_note_returns_draft_and_trace(client: TestClient) -> None:
     payload = response.json()
     assert payload["draft"]["note_id"] == draft["note_id"]
     assert payload["agent_trace"][0]["label"] == "stub_fallback"
+    assert payload["draft"]["review"] is not None
 
 
 def test_regenerate_field_preserves_other_fields(client: TestClient) -> None:
-    account_id = uuid4()
-    column_id = uuid4()
-    draft_response = client.post(
-        "/api/v1/notes/generate",
-        json={
-            "account_id": str(account_id),
-            "column_id": str(column_id),
-            "form": "experience",
-            "source": {"baby_month": 19, "scenario": "出门", "actions": ["准备清单"]},
-        },
-    )
-    draft = draft_response.json()["draft"]
+    draft = _draft_payload()
     old_body = draft["body"]
     regenerated = client.post(
         "/api/v1/notes/regenerate-field",
@@ -111,7 +114,7 @@ def test_regenerate_field_preserves_other_fields(client: TestClient) -> None:
     assert regenerated.status_code == 200
     assert regenerated.json()["body"] == old_body
     assert regenerated.json()["status"] == "ready"
-    assert regenerated.json()["review"] is None
+    assert regenerated.json()["review"] is not None
 
 
 def test_generate_note_rejects_invalid_source(client: TestClient) -> None:

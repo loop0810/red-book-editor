@@ -61,6 +61,8 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     (finding) => finding.level == RiskLevel.blocking,
   );
 
+  bool get _needsReview => _draft.status == NoteStatus.needsReview;
+
   @override
   void initState() {
     super.initState();
@@ -161,7 +163,8 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
       final regenerated = await onRegenerate(
         _draftFromFields(),
         field,
-        form: widget.styleForm,
+        // 草稿列表重新打开时没有额外的页面参数，优先恢复服务端保存的表达形式。
+        form: widget.styleForm ?? _draft.styleForm,
       );
       if (!mounted) return;
       setState(() => _applyDraft(regenerated));
@@ -268,6 +271,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
         body: version.body,
         hashtags: version.hashtags,
         coverCopy: version.coverCopy,
+        styleForm: version.styleForm ?? _draft.styleForm,
       );
       _titleController.text = version.titleCandidates.isEmpty
           ? _draft.source.scenario
@@ -310,6 +314,41 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     );
   }
 
+  Widget _reviewBanner(BuildContext context) {
+    if (_hasBlockingReview) {
+      return Card(
+        color: Theme.of(context).colorScheme.errorContainer,
+        child: const ListTile(
+          leading: Icon(Icons.block),
+          title: Text('这篇内容需要修改后才能导出'),
+          subtitle: Text('请检查疾病判断、用药或未经经历支持的表述。'),
+        ),
+      );
+    }
+    final warningFindings = _draft.reviewFindings
+        .where((finding) => finding.level == RiskLevel.warning)
+        .toList();
+    if (warningFindings.isNotEmpty) {
+      return Card(
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        child: const ListTile(
+          leading: Icon(Icons.info_outline),
+          title: Text('有提示级问题，发布前请人工确认'),
+        ),
+      );
+    }
+    if (_needsReview) {
+      return const Card(
+        child: ListTile(
+          leading: Icon(Icons.rate_review_outlined),
+          title: Text('审核状态：待复核'),
+          subtitle: Text('审核结果尚未通过，请确认内容后再继续使用。'),
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
   String _traceLabel(AgentTraceStep step) {
     // 服务端 trace 使用稳定的机器 label；这里把它翻译成用户能看懂的中文阶段名。
     switch (step.label) {
@@ -332,9 +371,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
 
   @override
   Widget build(BuildContext context) {
-    final warningFindings = _draft.reviewFindings
-        .where((finding) => finding.level == RiskLevel.warning)
-        .toList();
+    final reviewBanner = _reviewBanner(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text('编辑笔记'),
@@ -349,23 +386,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          if (_hasBlockingReview)
-            Card(
-              color: Theme.of(context).colorScheme.errorContainer,
-              child: const ListTile(
-                leading: Icon(Icons.block),
-                title: Text('这篇内容需要修改后才能导出'),
-                subtitle: Text('请检查疾病判断、用药或未经经历支持的表述。'),
-              ),
-            )
-          else if (warningFindings.isNotEmpty)
-            Card(
-              color: Theme.of(context).colorScheme.secondaryContainer,
-              child: const ListTile(
-                leading: Icon(Icons.info_outline),
-                title: Text('有提示级问题，发布前请人工确认'),
-              ),
-            ),
+          reviewBanner,
           if (widget.agentTrace.isNotEmpty)
             Card(
               child: ExpansionTile(

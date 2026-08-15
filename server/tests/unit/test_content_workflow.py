@@ -1,20 +1,29 @@
 from __future__ import annotations
 
-import pytest
 from datetime import UTC, datetime
 from uuid import UUID
+
+import pytest
 
 from red_book_editor_server.domain.contracts import (
     NoteDraftDto,
     NoteStatus,
+    ReviewFindingDto,
+    ReviewResultDto,
     RiskLevel,
     SourceExperienceDto,
+    StyleForm,
 )
 from red_book_editor_server.modules.content_workflow import (
     DeterministicContentReviewer,
     ModelAssistedContentReviewer,
     StubContentGenerator,
     review_draft,
+    status_for_review,
+)
+from red_book_editor_server.modules.content_workflow.service import (
+    ContentWorkflowService,
+    StyleFormRequiredError,
 )
 
 
@@ -106,3 +115,51 @@ async def test_review_draft_merges_deterministic_and_model_checks() -> None:
     codes = {finding.code for finding in result.findings}
     assert "medication" in codes
     assert "unsupported_claim" in codes
+
+
+def test_status_mapping_requires_review_for_missing_and_warning_results() -> None:
+    assert status_for_review(None) is NoteStatus.NEEDS_REVIEW
+    warning = ReviewResultDto(
+        passed=True,
+        findings=[
+            ReviewFindingDto(
+                level=RiskLevel.WARNING,
+                code="account_scope",
+                message="请确认主题",
+            )
+        ],
+    )
+    assert status_for_review(warning) is NoteStatus.NEEDS_REVIEW
+    assert status_for_review(ReviewResultDto(passed=True)) is NoteStatus.READY
+
+
+@pytest.mark.asyncio
+async def test_shared_service_regenerates_only_requested_field_and_reaudits() -> None:
+    source = SourceExperienceDto(
+        baby_month=19,
+        scenario="睡前哭闹",
+        actions=["固定绘本时间"],
+        observations="入睡过程变顺了一些",
+    )
+    result = await ContentWorkflowService().generate(
+        account_id=UUID("00000000-0000-0000-0000-000000000001"),
+        column_id=UUID("00000000-0000-0000-0000-000000000002"),
+        source=source,
+        form=StyleForm.EXPERIENCE,
+    )
+    original = result.draft
+    regenerated = await ContentWorkflowService().regenerate_field(original, "title")
+    assert regenerated.body == original.body
+    assert regenerated.hashtags == original.hashtags
+    assert regenerated.cover_copy == original.cover_copy
+    assert regenerated.source == original.source
+    assert regenerated.style_form is StyleForm.EXPERIENCE
+    assert regenerated.review is not None
+    assert regenerated.status is NoteStatus.READY
+
+
+@pytest.mark.asyncio
+async def test_shared_service_requires_style_for_legacy_field_regeneration() -> None:
+    draft = _draft("宝宝记录了睡前哭闹。")
+    with pytest.raises(StyleFormRequiredError, match="style_form_required"):
+        await ContentWorkflowService().regenerate_field(draft, "body")

@@ -6,7 +6,12 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from red_book_editor_server.domain.contracts import NoteDraftDto, SourceExperienceDto
+from red_book_editor_server.domain.contracts import (
+    AccountProfileDto,
+    ContentColumnDto,
+    NoteDraftDto,
+    SourceExperienceDto,
+)
 
 
 class ContentGenerator(Protocol):
@@ -23,6 +28,18 @@ class NoteRepository(Protocol):
     async def get(self, note_id: UUID) -> NoteDraftDto | None: ...
 
     async def list_for_account(self, account_id: UUID) -> Sequence[NoteDraftDto]: ...
+
+    async def create(self, draft: NoteDraftDto) -> NoteDraftDto: ...
+
+    async def save(self, draft: NoteDraftDto) -> NoteDraftDto: ...
+
+
+class AccountColumnContextPort(Protocol):
+    """内容工作流读取账号和栏目上下文的端口。"""
+
+    async def get_account(self, account_id: UUID) -> AccountProfileDto | None: ...
+
+    async def get_column(self, account_id: UUID, column_id: UUID) -> ContentColumnDto | None: ...
 
 
 class ToolCall(BaseModel):

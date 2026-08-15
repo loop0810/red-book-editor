@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from red_book_editor_server.app.config import get_settings
 from red_book_editor_server.app.dependencies import build_model_gateway, database_session
-from red_book_editor_server.domain.agent import AgentRunError
 from red_book_editor_server.domain.contracts import (
     AssetDto,
     DraftVersionDto,
@@ -27,18 +26,20 @@ from red_book_editor_server.domain.ports import ModelGatewayError
 from red_book_editor_server.infrastructure.models import (
     AccountModel,
     AssetModel,
-    ContentColumnModel,
     DraftVersionModel,
     NoteModel,
     PublishRecordModel,
 )
-from red_book_editor_server.modules.content_workflow.generator import StubContentGenerator
-from red_book_editor_server.modules.content_workflow.review import review_draft
-from red_book_editor_server.modules.content_workflow.styling.agent import (
-    finalize_to_note_draft,
-    style_draft,
+from red_book_editor_server.infrastructure.repositories import (
+    SqlAlchemyAccountColumnContextRepository,
+    SqlAlchemyNoteRepository,
 )
-from red_book_editor_server.modules.content_workflow.styling.models import FinalizeArgs
+from red_book_editor_server.modules.content_workflow.generator import ContentGenerationError
+from red_book_editor_server.modules.content_workflow.review import review_draft, status_for_review
+from red_book_editor_server.modules.content_workflow.service import (
+    ContentWorkflowService,
+    WorkflowContextError,
+)
 
 router = APIRouter(tags=["notes"])
 
@@ -46,6 +47,7 @@ router = APIRouter(tags=["notes"])
 class CreateNoteRequest(BaseModel):
     column_id: UUID
     form: StyleForm | None = None
+    style_form: StyleForm | None = None
     source: SourceExperienceDto
 
 
@@ -71,6 +73,7 @@ class UpdateNoteRequest(BaseModel):
     hashtags: list[str] = Field(default_factory=list)
     cover_copy: str = ""
     image_suggestions: list[str] = Field(default_factory=list)
+    style_form: StyleForm | None = None
 
 
 @router.post("/api/v1/accounts/{account_id}/assets", response_model=dict[str, str], status_code=201)
@@ -206,6 +209,9 @@ def note_dto(note: NoteModel) -> NoteDraftDto:
         cover_copy=content.get("cover_copy", ""),
         image_suggestions=content.get("image_suggestions", []),
         source=source,
+        style_form=StyleForm(content["style_form"])
+        if content.get("style_form") is not None
+        else None,
         review=ReviewResultDto.model_validate(note.review) if note.review else None,
         updated_at=note.updated_at or datetime.now(UTC),
     )
@@ -217,91 +223,27 @@ async def create_note(
     request: CreateNoteRequest,
     session: AsyncSession = Depends(database_session),
 ) -> NoteDraftDto:
-    account = await session.get(AccountModel, account_id)
-    if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
-    column = await session.get(ContentColumnModel, request.column_id)
-    if column is None or column.account_id != account_id or not column.enabled:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="column_not_found")
     settings = get_settings()
-    style_marker: str | None = None
-    if request.form is not None and settings.model_provider == "deepseek":
-        try:
-            result = await style_draft(
-                build_model_gateway(settings),
-                source=request.source,
-                neutral_draft=None,
-                form=request.form,
-                account_context=account.positioning,
-                column_context=column.description,
-            )
-        except (AgentRunError, ModelGatewayError) as error:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="content_generation_failed",
-            ) from error
-        finalized = result.result
-        if not isinstance(finalized, FinalizeArgs):
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="content_generation_failed",
-            )
-        draft = finalize_to_note_draft(
-            finalized,
+    service = ContentWorkflowService(
+        context=SqlAlchemyAccountColumnContextRepository(session),
+        model_provider=settings.model_provider,
+        gateway=(build_model_gateway(settings) if settings.model_provider == "deepseek" else None),
+    )
+    try:
+        result = await service.generate(
             account_id=account_id,
             column_id=request.column_id,
             source=request.source,
+            form=request.form or request.style_form or StyleForm.EXPERIENCE,
         )
-        review = None
-        style_marker = request.form.value
-    else:
-        draft = await StubContentGenerator().generate(
-            request.source,
-            account_id=account_id,
-            column_id=request.column_id,
-        )
-        review = await review_draft(draft)
-        draft = draft.model_copy(
-            update={
-                "status": NoteStatus.NEEDS_REVIEW if not review.passed else NoteStatus.READY,
-                "review": review,
-            }
-        )
-    content = draft.model_dump(
-        mode="json",
-        exclude={
-            "note_id",
-            "account_id",
-            "column_id",
-            "status",
-            "source",
-            "review",
-            "updated_at",
-        },
-    )
-    if style_marker is not None:
-        content["style_form"] = style_marker
-    note = NoteModel(
-        id=draft.note_id,
-        account_id=account_id,
-        column_id=request.column_id,
-        status=draft.status.value,
-        source=request.source.model_dump(mode="json"),
-        content=content,
-        review=review.model_dump(mode="json") if review is not None else None,
-    )
-    session.add(note)
-    await session.flush()
-    session.add(
-        DraftVersionModel(
-            note_id=note.id,
-            version=1,
-            content=note.content,
-        )
-    )
-    await session.commit()
-    await session.refresh(note)
-    return note_dto(note)
+        return await SqlAlchemyNoteRepository(session).create(result.draft)
+    except WorkflowContextError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error.code) from error
+    except (ContentGenerationError, ModelGatewayError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="content_generation_failed",
+        ) from error
 
 
 @router.get("/api/v1/notes/{note_id}", response_model=NoteDraftDto)
@@ -337,40 +279,33 @@ async def update_note(
     note = await session.get(NoteModel, note_id)
     if note is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note_not_found")
-    content = payload.model_dump()
-    note.content = content
-    if content.get("style_form"):
-        note.status = NoteStatus.READY
-        note.review = None
-    else:
-        review = await review_draft(note_dto(note))
-        note.status = NoteStatus.NEEDS_REVIEW if not review.passed else NoteStatus.READY
-        note.review = review.model_dump(mode="json")
-    next_version = 1
-    versions = (
-        (
-            await session.execute(
-                select(DraftVersionModel)
-                .where(DraftVersionModel.note_id == note_id)
-                .order_by(DraftVersionModel.version.desc())
-                .limit(1)
-            )
-        )
-        .scalars()
-        .first()
+    current = note_dto(note)
+    style_form = (
+        payload.style_form if "style_form" in payload.model_fields_set else current.style_form
     )
-    if versions is not None:
-        next_version = versions.version + 1
-    session.add(
-        DraftVersionModel(
-            note_id=note.id,
-            version=next_version,
-            content=content,
-        )
+    candidate = current.model_copy(
+        update={
+            "topic_angle": payload.topic_angle,
+            "title_candidates": payload.title_candidates,
+            "body": payload.body,
+            "hashtags": payload.hashtags,
+            "cover_copy": payload.cover_copy,
+            "image_suggestions": payload.image_suggestions,
+            "style_form": style_form,
+            # 客户端提交的 status/review 不存在信任边界，保存前一律重算。
+            "status": NoteStatus.DRAFT,
+            "review": None,
+        }
     )
-    await session.commit()
-    await session.refresh(note)
-    return note_dto(note)
+    review = await review_draft(candidate)
+    reviewed = candidate.model_copy(update={"review": review, "status": status_for_review(review)})
+    try:
+        return await SqlAlchemyNoteRepository(session).save(reviewed)
+    except LookupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="note_not_found",
+        ) from error
 
 
 @router.get("/api/v1/notes/{note_id}/versions", response_model=list[DraftVersionDto])
@@ -394,6 +329,9 @@ async def list_note_versions(
             hashtags=version.content.get("hashtags", []),
             cover_copy=version.content.get("cover_copy", ""),
             image_suggestions=version.content.get("image_suggestions", []),
+            style_form=StyleForm(version.content["style_form"])
+            if version.content.get("style_form") is not None
+            else None,
             created_at=version.created_at,
         )
         for version in result.scalars()
@@ -409,8 +347,25 @@ async def export_note(
     if note is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note_not_found")
     review = ReviewResultDto.model_validate(note.review) if note.review else None
-    if review and any(finding.level.value == "blocking" for finding in review.findings):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="blocking_review")
+    if review is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "review_required",
+                "message": "草稿尚未完成审核，暂不能导出",
+                "reasons": [],
+            },
+        )
+    blocking = [finding for finding in review.findings if finding.level.value == "blocking"]
+    if blocking:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "blocking_review",
+                "message": "草稿包含阻断级风险，暂不能导出",
+                "reasons": [finding.message for finding in blocking],
+            },
+        )
     return note_dto(note)
 
 
