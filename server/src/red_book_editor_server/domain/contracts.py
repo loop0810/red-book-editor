@@ -27,6 +27,31 @@ class RiskLevel(StrEnum):
     BLOCKING = "blocking"
 
 
+class FactKind(StrEnum):
+    CONFIRMED = "confirmed"
+    OBSERVED = "observed"
+    OPINION = "opinion"
+    UNKNOWN = "unknown"
+    FORBIDDEN_INFERENCE = "forbidden_inference"
+
+
+class ClaimSupport(StrEnum):
+    SUPPORTED = "supported"
+    UNCERTAIN = "uncertain"
+    UNSUPPORTED = "unsupported"
+
+
+class SourceFactDto(BaseModel):
+    fact_id: str = Field(min_length=1)
+    source_path: str = Field(min_length=1)
+    kind: FactKind
+    text: str = Field(min_length=1)
+
+
+class FactLedgerDto(BaseModel):
+    facts: list[SourceFactDto] = Field(default_factory=list)
+
+
 class AccountProfileDto(BaseModel):
     account_id: UUID
     positioning: str = Field(min_length=1)
@@ -62,11 +87,27 @@ class ReviewFindingDto(BaseModel):
     code: str
     message: str
     matched_text: str | None = None
+    evidence_fact_ids: list[str] = Field(default_factory=list)
+
+
+class ClaimAuditItemDto(BaseModel):
+    field: str = Field(min_length=1)
+    claim: str = Field(min_length=1)
+    support: ClaimSupport
+    evidence_fact_ids: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    reason: str = ""
+    level: RiskLevel = RiskLevel.NONE
 
 
 class ReviewResultDto(BaseModel):
     passed: bool
     findings: list[ReviewFindingDto] = Field(default_factory=list)
+    claim_audit: list[ClaimAuditItemDto] = Field(default_factory=list)
+    source_digest: str | None = None
+    content_digest: str | None = None
+    audit_version: str | None = None
+    policy_version: str | None = None
 
 
 class ToneProfile(BaseModel):
@@ -158,6 +199,7 @@ class DraftVersionDto(BaseModel):
     cover_copy: str = ""
     image_suggestions: list[str] = Field(default_factory=list)
     style_form: StyleForm | None = None
+    review: ReviewResultDto | None = None
     created_at: datetime
 
 

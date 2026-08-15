@@ -113,7 +113,7 @@ def test_regenerate_field_preserves_other_fields(client: TestClient) -> None:
     )
     assert regenerated.status_code == 200
     assert regenerated.json()["body"] == old_body
-    assert regenerated.json()["status"] == "ready"
+    assert regenerated.json()["status"] == "needs_review"
     assert regenerated.json()["review"] is not None
 
 

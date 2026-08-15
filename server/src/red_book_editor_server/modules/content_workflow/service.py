@@ -156,7 +156,9 @@ class ContentWorkflowService:
             update={**values, "style_form": effective_form, "updated_at": datetime.now(UTC)}
         )
         review = await review_draft(candidate)
-        return candidate.model_copy(update={"review": review, "status": status_for_review(review)})
+        return candidate.model_copy(
+            update={"review": review, "status": status_for_review(review, candidate)}
+        )
 
     async def _load_context(
         self, account_id: UUID, column_id: UUID
@@ -175,7 +177,9 @@ class ContentWorkflowService:
         self, draft: NoteDraftDto, trace: list[AgentTraceStepDto]
     ) -> WorkflowResult:
         review = await review_draft(draft)
-        reviewed = draft.model_copy(update={"review": review, "status": status_for_review(review)})
+        reviewed = draft.model_copy(
+            update={"review": review, "status": status_for_review(review, draft)}
+        )
         return WorkflowResult(draft=reviewed, agent_trace=trace)
 
     async def _style(

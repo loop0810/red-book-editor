@@ -369,6 +369,17 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     }
   }
 
+  String _claimSupportLabel(ClaimSupport support) {
+    switch (support) {
+      case ClaimSupport.supported:
+        return '有来源支持';
+      case ClaimSupport.uncertain:
+        return '来源不确定';
+      case ClaimSupport.unsupported:
+        return '未找到来源支持';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final reviewBanner = _reviewBanner(context);
@@ -486,6 +497,25 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
                     : Text('命中：${finding.matchedText}'),
               ),
             ),
+          if (_draft.review != null)
+            ..._draft.review!.claimAudit
+                .where((item) => item.support != ClaimSupport.supported)
+                .map(
+                  (item) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      item.level == RiskLevel.blocking
+                          ? Icons.block
+                          : Icons.info_outline,
+                    ),
+                    title: Text(_claimSupportLabel(item.support)),
+                    subtitle: Text(
+                      item.reason.isEmpty
+                          ? item.claim
+                          : '${item.claim}\n${item.reason}',
+                    ),
+                  ),
+                ),
           const SizedBox(height: 12),
           Row(
             children: [

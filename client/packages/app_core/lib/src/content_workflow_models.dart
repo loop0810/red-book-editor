@@ -4,6 +4,8 @@ enum NoteStatus { draft, needsReview, ready, published, discarded }
 
 enum RiskLevel { none, warning, blocking }
 
+enum ClaimSupport { supported, uncertain, unsupported }
+
 enum StyleForm { popularScience, experience, advertorial }
 
 String styleFormToApi(StyleForm form) {
@@ -89,12 +91,98 @@ class ReviewFinding {
     required this.code,
     required this.message,
     this.matchedText,
+    this.evidenceFactIds = const [],
   });
 
   final RiskLevel level;
   final String code;
   final String message;
   final String? matchedText;
+  final List<String> evidenceFactIds;
+}
+
+class ClaimAuditItem {
+  const ClaimAuditItem({
+    required this.field,
+    required this.claim,
+    required this.support,
+    this.evidenceFactIds = const [],
+    this.evidence = const [],
+    this.reason = '',
+    this.level = RiskLevel.none,
+  });
+
+  final String field;
+  final String claim;
+  final ClaimSupport support;
+  final List<String> evidenceFactIds;
+  final List<String> evidence;
+  final String reason;
+  final RiskLevel level;
+}
+
+class ReviewResult {
+  const ReviewResult({
+    required this.passed,
+    this.findings = const [],
+    this.claimAudit = const [],
+    this.sourceDigest,
+    this.contentDigest,
+    this.auditVersion,
+    this.policyVersion,
+  });
+
+  final bool passed;
+  final List<ReviewFinding> findings;
+  final List<ClaimAuditItem> claimAudit;
+  final String? sourceDigest;
+  final String? contentDigest;
+  final String? auditVersion;
+  final String? policyVersion;
+
+  factory ReviewResult.fromJson(Map<String, dynamic> json) {
+    return ReviewResult(
+      passed: json['passed'] as bool? ?? false,
+      findings: _reviewFindingsFromJson(json['findings']),
+      claimAudit: _claimAuditFromJson(json['claim_audit']),
+      sourceDigest: json['source_digest'] as String?,
+      contentDigest: json['content_digest'] as String?,
+      auditVersion: json['audit_version'] as String?,
+      policyVersion: json['policy_version'] as String?,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'passed': passed,
+    'findings': findings
+        .map(
+          (finding) => {
+            'level': _riskLevelToApi(finding.level),
+            'code': finding.code,
+            'message': finding.message,
+            'matched_text': finding.matchedText,
+            'evidence_fact_ids': finding.evidenceFactIds,
+          },
+        )
+        .toList(),
+    'claim_audit': claimAudit
+        .map(
+          (item) => {
+            'field': item.field,
+            'claim': item.claim,
+            'support': _claimSupportToApi(item.support),
+            'evidence_fact_ids': item.evidenceFactIds,
+            'evidence': item.evidence,
+            'reason': item.reason,
+            'level': _riskLevelToApi(item.level),
+          },
+        )
+        .toList(),
+    'source_digest': sourceDigest,
+    'content_digest': contentDigest,
+    'audit_version': auditVersion,
+    'policy_version': policyVersion,
+  };
 }
 
 class NoteDraft {
@@ -112,7 +200,7 @@ class NoteDraft {
     this.coverCopy = '',
     this.imageSuggestions = const [],
     this.styleForm,
-    this.reviewFindings = const [],
+    this.review,
     this.updatedAt = '',
   });
 
@@ -128,8 +216,10 @@ class NoteDraft {
   final String coverCopy;
   final List<String> imageSuggestions;
   final StyleForm? styleForm;
-  final List<ReviewFinding> reviewFindings;
+  final ReviewResult? review;
   final String updatedAt;
+
+  List<ReviewFinding> get reviewFindings => review?.findings ?? const [];
 
   factory NoteDraft.fromJson(Map<String, dynamic> json) {
     // fromJson 负责把服务端完整响应拆成类型安全对象；缺省字段提供向后兼容。
@@ -151,7 +241,9 @@ class NoteDraft {
       styleForm: json['style_form'] is String
           ? styleFormFromApi(json['style_form'] as String)
           : null,
-      reviewFindings: _reviewFindingsFromJson(json['review']),
+      review: json['review'] is Map<String, dynamic>
+          ? ReviewResult.fromJson(json['review'] as Map<String, dynamic>)
+          : null,
       updatedAt: json['updated_at'] as String? ?? '',
     );
   }
@@ -170,23 +262,7 @@ class NoteDraft {
     'image_suggestions': imageSuggestions,
     'style_form': styleForm == null ? null : styleFormToApi(styleForm!),
     'source': source.toJson(),
-    'review': reviewFindings.isEmpty
-        ? null
-        : {
-            'passed': !reviewFindings.any(
-              (finding) => finding.level == RiskLevel.blocking,
-            ),
-            'findings': reviewFindings
-                .map(
-                  (finding) => {
-                    'level': _riskLevelToApi(finding.level),
-                    'code': finding.code,
-                    'message': finding.message,
-                    'matched_text': finding.matchedText,
-                  },
-                )
-                .toList(),
-          },
+    'review': review?.toJson(),
     'updated_at': updatedAt,
   };
 
@@ -199,7 +275,7 @@ class NoteDraft {
     String? coverCopy,
     List<String>? imageSuggestions,
     StyleForm? styleForm,
-    List<ReviewFinding>? reviewFindings,
+    ReviewResult? review,
     String? updatedAt,
   }) {
     // copyWith 用于局部修改：只替换用户刚编辑的字段，其他字段沿用原对象。
@@ -216,7 +292,7 @@ class NoteDraft {
       coverCopy: coverCopy ?? this.coverCopy,
       imageSuggestions: imageSuggestions ?? this.imageSuggestions,
       styleForm: styleForm ?? this.styleForm,
-      reviewFindings: reviewFindings ?? this.reviewFindings,
+      review: review ?? this.review,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -301,6 +377,7 @@ class NoteDraftVersion {
     this.coverCopy = '',
     this.imageSuggestions = const [],
     this.styleForm,
+    this.review,
     this.createdAt = '',
   });
 
@@ -312,6 +389,7 @@ class NoteDraftVersion {
   final String coverCopy;
   final List<String> imageSuggestions;
   final StyleForm? styleForm;
+  final ReviewResult? review;
   final String createdAt;
 
   factory NoteDraftVersion.fromJson(Map<String, dynamic> json) {
@@ -328,6 +406,9 @@ class NoteDraftVersion {
               .cast<String>(),
       styleForm: json['style_form'] is String
           ? styleFormFromApi(json['style_form'] as String)
+          : null,
+      review: json['review'] is Map<String, dynamic>
+          ? ReviewResult.fromJson(json['review'] as Map<String, dynamic>)
           : null,
       createdAt: json['created_at'] as String? ?? '',
     );
@@ -347,9 +428,7 @@ class DownloadedAsset {
 }
 
 List<ReviewFinding> _reviewFindingsFromJson(Object? value) {
-  // review 可能为空；客户端把它统一转换成列表，页面只需判断风险等级。
-  final review = value is Map<String, dynamic> ? value : null;
-  final findings = review?['findings'];
+  final findings = value;
   if (findings is! List<dynamic>) return const [];
   return findings.whereType<Map<String, dynamic>>().map((finding) {
     final level = switch (finding['level']) {
@@ -362,6 +441,35 @@ List<ReviewFinding> _reviewFindingsFromJson(Object? value) {
       code: finding['code'] as String? ?? 'unknown',
       message: finding['message'] as String? ?? '',
       matchedText: finding['matched_text'] as String?,
+      evidenceFactIds:
+          (finding['evidence_fact_ids'] as List<dynamic>? ?? const [])
+              .cast<String>(),
+    );
+  }).toList();
+}
+
+List<ClaimAuditItem> _claimAuditFromJson(Object? value) {
+  if (value is! List<dynamic>) return const [];
+  return value.whereType<Map<String, dynamic>>().map((item) {
+    final support = switch (item['support']) {
+      'supported' => ClaimSupport.supported,
+      'uncertain' => ClaimSupport.uncertain,
+      _ => ClaimSupport.unsupported,
+    };
+    final level = switch (item['level']) {
+      'blocking' => RiskLevel.blocking,
+      'warning' => RiskLevel.warning,
+      _ => RiskLevel.none,
+    };
+    return ClaimAuditItem(
+      field: item['field'] as String? ?? '',
+      claim: item['claim'] as String? ?? '',
+      support: support,
+      evidenceFactIds: (item['evidence_fact_ids'] as List<dynamic>? ?? const [])
+          .cast<String>(),
+      evidence: (item['evidence'] as List<dynamic>? ?? const []).cast<String>(),
+      reason: item['reason'] as String? ?? '',
+      level: level,
     );
   }).toList();
 }
@@ -407,5 +515,16 @@ String _riskLevelToApi(RiskLevel level) {
       return 'warning';
     case RiskLevel.none:
       return 'none';
+  }
+}
+
+String _claimSupportToApi(ClaimSupport support) {
+  switch (support) {
+    case ClaimSupport.supported:
+      return 'supported';
+    case ClaimSupport.uncertain:
+      return 'uncertain';
+    case ClaimSupport.unsupported:
+      return 'unsupported';
   }
 }

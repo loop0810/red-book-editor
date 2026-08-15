@@ -288,6 +288,38 @@ void main() {
       );
       expect(draft.toJson()['style_form'], 'experience');
     });
+
+    test('NoteDraft parses claim audit evidence and support state', () {
+      final payload = Map<String, dynamic>.from(_draftJson);
+      payload['review'] = {
+        'passed': true,
+        'findings': [],
+        'claim_audit': [
+          {
+            'field': 'body',
+            'claim': '固定绘本时间',
+            'support': 'supported',
+            'evidence_fact_ids': ['source.actions[0]'],
+            'evidence': ['固定绘本时间'],
+            'reason': '',
+            'level': 'none',
+          },
+        ],
+        'source_digest': 'source-digest',
+        'content_digest': 'content-digest',
+        'audit_version': 'fact-ledger-v1',
+        'policy_version': 'parenting-safety-v1',
+      };
+      final draft = NoteDraft.fromJson(payload);
+
+      expect(draft.review, isNotNull);
+      expect(draft.review!.claimAudit.single.support, ClaimSupport.supported);
+      expect(draft.review!.claimAudit.single.evidence, ['固定绘本时间']);
+      expect(
+        (draft.toJson()['review'] as Map<String, dynamic>)['content_digest'],
+        'content-digest',
+      );
+    });
   });
 
   group('manual publishing boundary', () {

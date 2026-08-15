@@ -35,7 +35,11 @@ from red_book_editor_server.infrastructure.repositories import (
     SqlAlchemyNoteRepository,
 )
 from red_book_editor_server.modules.content_workflow.generator import ContentGenerationError
-from red_book_editor_server.modules.content_workflow.review import review_draft, status_for_review
+from red_book_editor_server.modules.content_workflow.review import (
+    review_draft,
+    review_matches_draft,
+    status_for_review,
+)
 from red_book_editor_server.modules.content_workflow.service import (
     ContentWorkflowService,
     WorkflowContextError,
@@ -197,7 +201,8 @@ async def delete_asset(
 def note_dto(note: NoteModel) -> NoteDraftDto:
     source = SourceExperienceDto.model_validate(note.source)
     content = note.content
-    return NoteDraftDto(
+    review = ReviewResultDto.model_validate(note.review) if note.review else None
+    draft = NoteDraftDto(
         note_id=note.id,
         account_id=note.account_id,
         column_id=note.column_id,
@@ -212,9 +217,13 @@ def note_dto(note: NoteModel) -> NoteDraftDto:
         style_form=StyleForm(content["style_form"])
         if content.get("style_form") is not None
         else None,
-        review=ReviewResultDto.model_validate(note.review) if note.review else None,
+        review=review,
         updated_at=note.updated_at or datetime.now(UTC),
     )
+    stored_status = NoteStatus(note.status)
+    if stored_status in (NoteStatus.DRAFT, NoteStatus.NEEDS_REVIEW, NoteStatus.READY):
+        draft = draft.model_copy(update={"status": status_for_review(review, draft)})
+    return draft
 
 
 @router.post("/api/v1/accounts/{account_id}/notes", response_model=NoteDraftDto, status_code=201)
@@ -298,7 +307,9 @@ async def update_note(
         }
     )
     review = await review_draft(candidate)
-    reviewed = candidate.model_copy(update={"review": review, "status": status_for_review(review)})
+    reviewed = candidate.model_copy(
+        update={"review": review, "status": status_for_review(review, candidate)}
+    )
     try:
         return await SqlAlchemyNoteRepository(session).save(reviewed)
     except LookupError as error:
@@ -332,6 +343,9 @@ async def list_note_versions(
             style_form=StyleForm(version.content["style_form"])
             if version.content.get("style_form") is not None
             else None,
+            review=ReviewResultDto.model_validate(version.content["review"])
+            if version.content.get("review")
+            else None,
             created_at=version.created_at,
         )
         for version in result.scalars()
@@ -346,13 +360,14 @@ async def export_note(
     note = await session.get(NoteModel, note_id)
     if note is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note_not_found")
-    review = ReviewResultDto.model_validate(note.review) if note.review else None
-    if review is None:
+    draft = note_dto(note)
+    review = draft.review
+    if review is None or not review_matches_draft(review, draft):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "code": "review_required",
-                "message": "草稿尚未完成审核，暂不能导出",
+                "message": "草稿尚未完成当前版本审核，暂不能导出",
                 "reasons": [],
             },
         )
@@ -366,7 +381,7 @@ async def export_note(
                 "reasons": [finding.message for finding in blocking],
             },
         )
-    return note_dto(note)
+    return draft
 
 
 @router.post(

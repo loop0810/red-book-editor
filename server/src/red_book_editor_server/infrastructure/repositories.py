@@ -22,6 +22,7 @@ from red_book_editor_server.infrastructure.models import (
     DraftVersionModel,
     NoteModel,
 )
+from red_book_editor_server.modules.content_workflow.review import status_for_review
 
 
 class SqlAlchemyAccountColumnContextRepository:
@@ -127,7 +128,8 @@ class SqlAlchemyNoteRepository:
     @staticmethod
     def _to_dto(note: NoteModel) -> NoteDraftDto:
         content = note.content
-        return NoteDraftDto(
+        review = ReviewResultDto.model_validate(note.review) if note.review else None
+        draft = NoteDraftDto(
             note_id=note.id,
             account_id=note.account_id,
             column_id=note.column_id,
@@ -142,9 +144,17 @@ class SqlAlchemyNoteRepository:
             style_form=StyleForm(content["style_form"])
             if content.get("style_form") is not None
             else None,
-            review=ReviewResultDto.model_validate(note.review) if note.review else None,
+            review=review,
             updated_at=note.updated_at or datetime.now(UTC),
         )
+        stored_status = NoteStatus(note.status)
+        if stored_status in (
+            NoteStatus.DRAFT,
+            NoteStatus.NEEDS_REVIEW,
+            NoteStatus.READY,
+        ):
+            draft = draft.model_copy(update={"status": status_for_review(review, draft)})
+        return draft
 
 
 def _content_from_draft(draft: NoteDraftDto) -> dict[str, object]:
@@ -158,5 +168,6 @@ def _content_from_draft(draft: NoteDraftDto) -> dict[str, object]:
             "cover_copy",
             "image_suggestions",
             "style_form",
+            "review",
         },
     )

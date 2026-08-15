@@ -7,6 +7,7 @@
 - `cases.json`：评测输入和人工预期边界。
 - `scorecard.md`：人工评分规则和硬失败条件。
 - `runs/`：runner 产生的单次或多次模型运行记录。
+- 每条 run record 包含 `automatic_hard_failures` 初筛标签；它只用于回归筛查，不替代人工评分。
 - `scores/`：与 run 一一对应的人工评分、硬失败和人工修订稿。
 - `baseline-report.md`：人工完成评分后的汇总报告。
 

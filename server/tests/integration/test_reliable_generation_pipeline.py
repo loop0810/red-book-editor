@@ -65,6 +65,9 @@ def test_main_generate_save_list_reload_and_versions(client: TestClient) -> None
     draft = generated.json()["draft"]
     assert draft["style_form"] == "experience"
     assert draft["review"] is not None
+    assert draft["review"]["claim_audit"]
+    assert draft["review"]["source_digest"]
+    assert draft["review"]["content_digest"]
     assert draft["status"] == "ready"
     note_id = draft["note_id"]
 
@@ -81,7 +84,7 @@ def test_main_generate_save_list_reload_and_versions(client: TestClient) -> None
         },
     )
     assert saved.status_code == 200
-    assert saved.json()["status"] == "ready"
+    assert saved.json()["status"] == "needs_review"
     assert saved.json()["style_form"] == "experience"
 
     listed = client.get(f"/api/v1/accounts/{account_id}/notes")
@@ -98,6 +101,7 @@ def test_main_generate_save_list_reload_and_versions(client: TestClient) -> None
     assert versions.status_code == 200
     assert [version["version"] for version in versions.json()] == [1, 2]
     assert all(version["style_form"] == "experience" for version in versions.json())
+    assert all(version["review"] is not None for version in versions.json())
 
 
 @pytest.mark.integration
@@ -155,7 +159,7 @@ def test_field_regeneration_preserves_user_edit_and_style_form(client: TestClien
     assert result["cover_copy"] == "手动封面"
     assert result["style_form"] == "experience"
     assert result["review"] is not None
-    assert result["status"] == "ready"
+    assert result["status"] == "needs_review"
 
 
 @pytest.mark.integration
@@ -209,3 +213,57 @@ def test_warning_review_stays_needs_review_and_keeps_export_reasoning(
     exported = client.get(f"/api/v1/notes/{draft['note_id']}/export")
     assert exported.status_code == 200
     assert exported.json()["status"] == "needs_review"
+
+
+@pytest.mark.integration
+def test_export_rejects_stale_review_after_out_of_band_content_change(client: TestClient) -> None:
+    account_id, column_id = _account_and_column(client)
+    created = client.post(
+        f"/api/v1/accounts/{account_id}/notes",
+        json={"column_id": column_id, "source": _source()},
+    )
+    assert created.status_code == 201
+    note_id = created.json()["note_id"]
+
+    async def change_content_without_review() -> None:
+        application = cast(Any, client.app)
+        async with application.state.session_factory() as session:
+            note = await session.get(NoteModel, note_id)
+            assert note is not None
+            note.content = {**note.content, "body": "未经审核的外部新增内容"}
+            await session.commit()
+
+    cast(Any, client).portal.call(change_content_without_review)
+    exported = client.get(f"/api/v1/notes/{note_id}/export")
+    assert exported.status_code == 409
+    assert exported.json()["detail"]["code"] == "review_required"
+
+
+@pytest.mark.integration
+def test_legacy_review_is_readable_but_cannot_remain_ready(client: TestClient) -> None:
+    account_id, column_id = _account_and_column(client)
+    created = client.post(
+        f"/api/v1/accounts/{account_id}/notes",
+        json={"column_id": column_id, "source": _source()},
+    )
+    assert created.status_code == 201
+    note_id = created.json()["note_id"]
+
+    async def replace_with_legacy_review() -> None:
+        application = cast(Any, client.app)
+        async with application.state.session_factory() as session:
+            note = await session.get(NoteModel, note_id)
+            assert note is not None
+            note.review = {"passed": True, "findings": []}
+            note.status = "ready"
+            await session.commit()
+
+    cast(Any, client).portal.call(replace_with_legacy_review)
+    reopened = client.get(f"/api/v1/notes/{note_id}")
+    assert reopened.status_code == 200
+    assert reopened.json()["review"]["claim_audit"] == []
+    assert reopened.json()["status"] == "needs_review"
+
+    exported = client.get(f"/api/v1/notes/{note_id}/export")
+    assert exported.status_code == 409
+    assert exported.json()["detail"]["code"] == "review_required"

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from evals.agent_baseline.hard_failures import automatic_hard_failures
 from red_book_editor_server.app.config import get_settings
 from red_book_editor_server.app.dependencies import build_model_gateway
 from red_book_editor_server.domain.agent import AgentRunError, AgentTraceStep
@@ -66,15 +67,18 @@ async def run_case(
         form = StyleForm(case["form"])
         result = await style_draft(gateway, source=source, neutral_draft=None, form=form)  # type: ignore[arg-type]
         trace = result.trace
-        return {
-            "case_id": case["case_id"],
-            "attempt": attempt,
-            "status": "succeeded",
-            "elapsed_ms": round((time.perf_counter() - started) * 1000),
-            "draft": result.result.model_dump(mode="json"),
-            "agent_trace": [_trace_record(step) for step in trace],
-            "error": None,
-        }
+        return _annotate_record(
+            case,
+            {
+                "case_id": case["case_id"],
+                "attempt": attempt,
+                "status": "succeeded",
+                "elapsed_ms": round((time.perf_counter() - started) * 1000),
+                "draft": result.result.model_dump(mode="json"),
+                "agent_trace": [_trace_record(step) for step in trace],
+                "error": None,
+            },
+        )
     except AgentRunError as error:
         trace = error.trace
         return _failed_record(case, attempt, started, str(error), trace)
@@ -91,15 +95,23 @@ def _failed_record(
     error: str,
     trace: list[AgentTraceStep],
 ) -> dict[str, Any]:
-    return {
-        "case_id": case["case_id"],
-        "attempt": attempt,
-        "status": "failed",
-        "elapsed_ms": round((time.perf_counter() - started) * 1000),
-        "draft": None,
-        "agent_trace": [_trace_record(step) for step in trace],
-        "error": error,
-    }
+    return _annotate_record(
+        case,
+        {
+            "case_id": case["case_id"],
+            "attempt": attempt,
+            "status": "failed",
+            "elapsed_ms": round((time.perf_counter() - started) * 1000),
+            "draft": None,
+            "agent_trace": [_trace_record(step) for step in trace],
+            "error": error,
+        },
+    )
+
+
+def _annotate_record(case: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
+    record["automatic_hard_failures"] = automatic_hard_failures(case, record)
+    return record
 
 
 def _trace_record(step: AgentTraceStep) -> dict[str, Any]:
@@ -147,7 +159,7 @@ async def main(args: argparse.Namespace) -> Path:
             records.append(await run_case(gateway, case, attempt))
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": args.run_id,
         "started_at": datetime.now(UTC).isoformat(),
         "model_provider": settings.model_provider,

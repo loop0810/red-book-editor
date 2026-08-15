@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 
 from red_book_editor_server.domain.contracts import (
+    ClaimSupport,
     NoteDraftDto,
     NoteStatus,
     ReviewFindingDto,
@@ -20,6 +21,10 @@ from red_book_editor_server.modules.content_workflow import (
     StubContentGenerator,
     review_draft,
     status_for_review,
+)
+from red_book_editor_server.modules.content_workflow.fact_ledger import (
+    audit_claims,
+    build_fact_ledger,
 )
 from red_book_editor_server.modules.content_workflow.service import (
     ContentWorkflowService,
@@ -62,6 +67,33 @@ def test_reviewer_blocks_medication_advice() -> None:
     result = DeterministicContentReviewer().review(draft)
     assert not result.passed
     assert result.findings[0].level is RiskLevel.BLOCKING
+
+
+def test_fact_ledger_keeps_source_paths_and_boundary_kinds() -> None:
+    source = SourceExperienceDto(
+        baby_month=12,
+        scenario="宝宝周岁了",
+        actions=["邀请父母和朋友为宝宝举行周岁宴"],
+        observations="大家都很开心",
+        notes="只想记录这次经历",
+    )
+    ledger = build_fact_ledger(source)
+    facts = {fact.fact_id: fact for fact in ledger.facts}
+
+    assert facts["source.baby_month"].kind.value == "confirmed"
+    assert facts["source.actions[0]"].source_path == "source.actions[0]"
+    assert facts["source.observations"].kind.value == "observed"
+    assert facts["source.notes"].kind.value == "opinion"
+    assert facts["unknown.event"].kind.value == "unknown"
+    assert facts["forbidden.inference"].kind.value == "forbidden_inference"
+
+
+def test_claim_audit_does_not_mark_source_external_details_supported() -> None:
+    draft = _draft("宝宝今天在宴会现场抓周，大家都送上了祝福。")
+    audit = audit_claims(draft, build_fact_ledger(draft.source))
+
+    assert audit
+    assert all(item.support is not ClaimSupport.SUPPORTED for item in audit)
 
 
 def _draft(body: str) -> NoteDraftDto:
@@ -130,7 +162,17 @@ def test_status_mapping_requires_review_for_missing_and_warning_results() -> Non
         ],
     )
     assert status_for_review(warning) is NoteStatus.NEEDS_REVIEW
-    assert status_for_review(ReviewResultDto(passed=True)) is NoteStatus.READY
+    assert status_for_review(ReviewResultDto(passed=True)) is NoteStatus.NEEDS_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_review_snapshot_is_ready_only_when_matching_the_draft() -> None:
+    draft = _draft("宝宝记录了睡前哭闹和固定绘本时间。")
+    review = await review_draft(draft)
+    assert status_for_review(review, draft) is NoteStatus.READY
+
+    changed = draft.model_copy(update={"body": "宝宝后来已经睡整觉了。"})
+    assert status_for_review(review, changed) is NoteStatus.NEEDS_REVIEW
 
 
 @pytest.mark.asyncio
