@@ -169,6 +169,37 @@ async def test_critique_tool_flags_missing_facts_and_out_of_range_tags() -> None
 
 
 @pytest.mark.asyncio
+async def test_critique_does_not_pass_with_any_unresolved_issue() -> None:
+    body = _draft_payload()["body"]
+    assert isinstance(body, str)
+    payload: dict[str, object] = {
+        "form": "experience",
+        "draft": {
+            **_draft_payload(),
+            "body": body + "😀😀😀😀😀😀😀",
+        },
+        "source": _source().model_dump(mode="json"),
+    }
+
+    result = json.loads(await critique_draft_tool(payload))
+    assert result["passed"] is False
+    assert any("emoji" in issue for issue in result["issues"])
+
+
+@pytest.mark.asyncio
+async def test_suggest_tags_does_not_add_unrelated_precise_tags() -> None:
+    from red_book_editor_server.modules.content_workflow.styling.tools import suggest_tags_tool
+
+    result = json.loads(
+        await suggest_tags_tool({"topic": "宝宝爬沙发软包楼梯", "form": "advertorial"})
+    )
+
+    assert "#宝妈分享" in result
+    assert "#热性惊厥" not in result
+    assert "#住院" not in result
+
+
+@pytest.mark.asyncio
 async def test_critique_accepts_experience_narrative_paragraphs() -> None:
     payload: dict[str, object] = {
         "form": "experience",

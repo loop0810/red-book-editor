@@ -5,7 +5,10 @@ import re
 
 from red_book_editor_server.domain.agent import AgentPhase, Tool
 from red_book_editor_server.domain.contracts import SourceExperienceDto, StyleProfile
-from red_book_editor_server.modules.content_workflow.styling.decorator import _required_facts
+from red_book_editor_server.modules.content_workflow.styling.decorator import (
+    _contains_fact,
+    _required_facts,
+)
 from red_book_editor_server.modules.content_workflow.styling.models import (
     CritiqueArgs,
     CritiqueResult,
@@ -121,8 +124,9 @@ async def suggest_tags_tool(args: dict[str, object]) -> str:
     parsed = SuggestTagsArgs.model_validate(args)
     profile = load_style_profile(parsed.form)
     topic = parsed.topic
+    precise = [tag for tag in profile.tags.precise if _tag_matches(tag, topic)]
     trending = [tag for tag in profile.tags.trending if _tag_matches(tag, topic)]
-    combined = [*profile.tags.generic, *profile.tags.precise, *trending]
+    combined = [*profile.tags.generic, *precise, *trending]
     deduped = list(dict.fromkeys(tag.lstrip("#") for tag in combined))
     max_tags = profile.rich_text.tag_count_range[1]
     return json.dumps([f"#{tag}" for tag in deduped[:max_tags]], ensure_ascii=False)
@@ -146,7 +150,7 @@ async def critique_draft_tool(args: dict[str, object]) -> str:
     issues.extend(rich_issues)
 
     # 事实分数和各风格分项都达到门槛后，模型才被允许继续 finalize。
-    passed = facts_score >= 4 and min(hook, structure, tone_score, rich_score) >= 3
+    passed = not issues and facts_score >= 4 and min(hook, structure, tone_score, rich_score) >= 3
     result = CritiqueResult(
         scores={
             "hook": hook,
@@ -203,7 +207,7 @@ def _score_tone(profile: StyleProfile, text: str) -> tuple[int, list[str]]:
 def _score_facts(source: SourceExperienceDto, text: str) -> tuple[int, list[str]]:
     # 当前版本使用关键事实的文本匹配，优点是简单可解释，缺点是对同义改写不够宽容。
     # 这正是后续引入 Source Fact Ledger 时需要替换/增强的地方。
-    missing = [fact for fact in _required_facts(source) if fact not in text]
+    missing = [fact for fact in _required_facts(source) if not _contains_fact(fact, text)]
     issues = [f"来源事实缺失：{fact}" for fact in missing]
     return (5 if not missing else max(1, 5 - len(missing))), issues
 

@@ -49,6 +49,7 @@ server/storage/
 !.env.example
 
 # 签名材料与密钥
+key.json
 *.jks
 *.keystore
 *.p12

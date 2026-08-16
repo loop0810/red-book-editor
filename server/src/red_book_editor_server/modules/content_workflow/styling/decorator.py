@@ -46,11 +46,22 @@ def _compact(value: str) -> str:
 
 
 def _required_facts(source: SourceExperienceDto) -> list[str]:
-    facts = [source.scenario.strip(), str(source.baby_month)]
-    facts.extend(action.strip() for action in source.actions if action.strip())
-    if source.observations.strip():
-        facts.append(source.observations.strip())
+    facts = _split_fact_clauses(source.scenario)
+    facts.append(str(source.baby_month))
+    for action in source.actions:
+        facts.extend(_split_fact_clauses(action, split=False))
+    facts.extend(_split_fact_clauses(source.observations))
     return [fact for fact in facts if fact]
+
+
+def _split_fact_clauses(value: str, *, split: bool = True) -> list[str]:
+    """Return independently checkable source clauses without semantic inference."""
+
+    stripped = value.strip()
+    if not stripped:
+        return []
+    parts = re.split(r"[，,；;。！？!?]+", stripped) if split else [stripped]
+    return [part.strip() for part in parts if part.strip()]
 
 
 def _normalize_tags(hashtags: list[str], profile: StyleProfile) -> list[str]:

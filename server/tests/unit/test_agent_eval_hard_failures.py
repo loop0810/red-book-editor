@@ -34,3 +34,23 @@ def test_hard_failure_checker_flags_product_claims() -> None:
         _record("这个软包楼梯绝对安全，适合所有宝宝，一定能促进发育。"),
     )
     assert set(failures) == {"safety_blocking", "fact_blocking"}
+
+
+def test_nested_finalize_result_does_not_create_false_fact_failure() -> None:
+    case = {"source": {"scenario": "宝宝喜欢爬来爬去，开始想要往沙发上爬"}}
+    record = {
+        "status": "succeeded",
+        "draft": {
+            "form": "experience",
+            "draft": {
+                "topic_angle": "宝宝喜欢爬来爬去的记录",
+                "title_candidates": ["宝宝的爬行记录"],
+                "body": "宝宝喜欢爬来爬去，最近开始想要往沙发上爬了。",
+                "hashtags": [],
+                "cover_copy": "",
+            },
+            "image_suggestions": [],
+        },
+    }
+
+    assert automatic_hard_failures(case, record) == []

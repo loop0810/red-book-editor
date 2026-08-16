@@ -135,7 +135,7 @@ def test_account_workbench_and_main_generation_share_persistence_semantics(
 
 
 @pytest.mark.integration
-def test_field_regeneration_preserves_user_edit_and_style_form(client: TestClient) -> None:
+def test_field_regeneration_returns_target_field_suggestion(client: TestClient) -> None:
     account_id, column_id = _account_and_column(client)
     generated = client.post(
         "/api/v1/notes/generate",
@@ -155,11 +155,15 @@ def test_field_regeneration_preserves_user_edit_and_style_form(client: TestClien
     )
     assert regenerated.status_code == 200
     result = regenerated.json()
-    assert result["body"] == "用户刚刚手动改过的正文"
-    assert result["cover_copy"] == "手动封面"
-    assert result["style_form"] == "experience"
+    assert result["field"] == "title"
+    assert isinstance(result["value"], list)
+    assert result["value"]
+    assert result["base_field_digest"]
+    assert result["base_content_digest"]
     assert result["review"] is not None
-    assert result["status"] == "needs_review"
+    assert "body" not in result
+    assert "cover_copy" not in result
+    assert "style_form" not in result
 
 
 @pytest.mark.integration

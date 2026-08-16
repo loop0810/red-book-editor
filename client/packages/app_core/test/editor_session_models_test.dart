@@ -82,7 +82,9 @@ void main() {
   test('manual edits make a pending suggestion conflicted', () {
     final session = EditorSessionState(
       draft: _draft(title: '用户标题'),
-      aiBaseline: const {EditableField.title: ['原标题']},
+      aiBaseline: const {
+        EditableField.title: ['原标题'],
+      },
     ).addSuggestion(_suggestion(), baseValue: const ['原标题']);
     final suggestion = session.pendingSuggestions.single;
     expect(session.hasConflict(suggestion), isTrue);

@@ -31,7 +31,7 @@ run:
 	$(UV_RUN) python -m uvicorn red_book_editor_server.main:app --reload
 
 eval-baseline:
-	MODEL_PROVIDER=deepseek $(UV_RUN) python scripts/run_agent_eval.py --repetitions 2 --run-id "$${RUN_ID:-baseline-$$(date +%Y%m%d-%H%M%S)}"
+	MODEL_PROVIDER=deepseek $(UV_RUN) python -m scripts.run_agent_eval --repetitions 2 --run-id "$${RUN_ID:-baseline-$$(date +%Y%m%d-%H%M%S)}"
 
 eval-validate:
 	$(UV_RUN) python scripts/validate_agent_eval.py --cases evals/agent_baseline/cases.json

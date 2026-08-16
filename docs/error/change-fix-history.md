@@ -16,6 +16,38 @@
 
 记录按完成时间倒序追加，不删除历史内容。若一个 change 只部分解决某个问题，应在“覆盖范围”中明确边界，避免把路线图中的计划误认为已经实现。
 
+## 2026-08-16：harden-milestone3-regression-and-evaluation
+
+### 关联问题
+
+来源：[`red-book-editor-agent-evolution-roadmap.md`](./red-book-editor-agent-evolution-roadmap.md)
+
+- Milestone 3 验证暴露的字段重生成集成断言过时、baseline 导入路径错误、嵌套结果被误判为 `fact_blocking`，以及 Agent 因最大步骤、修订预算和重复错误失败的问题。
+- `P1-06`：评测尚未成为完整质量门禁；本次补强自动回归与可诊断失败记录，但不等同于人工质量评分或成本门禁。
+
+OpenSpec：[`harden-milestone3-regression-and-evaluation`](../../openspec/changes/archive/2026-08-16-harden-milestone3-regression-and-evaluation/)
+
+### 实际改动
+
+- 服务端字段重生成集成测试改为断言目标字段 `FieldSuggestion`，并明确拒绝旧的整篇草稿字段；`make eval-baseline` 改用模块安全的 runner 入口。
+- 自动硬失败检查支持嵌套 `FinalizeArgs` 结果和旧扁平草稿；事实覆盖按可独立识别的中文分句匹配，保留动作和安全边界；未解决校验问题时 `critique` 不得返回通过。
+- 精确/趋势话题限制为主题相关候选，风格 profile 移除医疗背书、功效保证、品牌和平台结果等过于具体或不安全示例；新增对应单元回归测试。
+- 修正 `ai-editing-interactions` Purpose，新增 `baseline-regression-gate` 主 spec，并同步 Agent runtime 与 Fact Ledger 主 spec。
+- 根目录 `key.json` 已加入 `.gitignore`；本次未提交密钥，也未新增数据库 migration。客户端仅有既有测试文件格式化变更。
+
+### 验证结果
+
+- 服务端 lock-check、format-check、typecheck 通过；unit tests 为 71 passed、15 deselected；PostgreSQL integration tests 为 15 passed、71 deselected，测试后执行 `make migrate` 恢复到 Alembic head。
+- `make eval-validate` 通过（5 个案例）；使用本地 `key.json` 仅注入进程环境执行同一五案例 baseline，`milestone3-fix-20260816-1215.json` 为 10/10 成功、0 个 Agent 失败、0 个自动硬失败；运行记录未保存 API key。
+- Flutter format、`flutter analyze`、根测试和 package tests 通过（根测试 1 passed，package tests 31 passed）；`git diff --check` 通过。
+- `openspec validate --all --strict` 通过（11 passed，0 failed）。
+- `key.json` 已由 `.gitignore` 忽略，且未被 Git 跟踪。
+
+### 覆盖范围与后续问题
+
+- 本次 baseline 结果是自动状态、失败码和硬失败初筛，不包含人工评分、Token/成本统计或完整语义质量门禁；自动硬失败为零不能单独证明内容安全或质量。
+- 图片理解、跨设备/关闭页面后的建议恢复、字符级富文本偏移和完整质量门禁仍属于后续工作；此前本地失败的旧 run JSON 保持未跟踪，不纳入本次提交。
+
 ## 2026-08-16：milestone-3-ai-native-editing
 
 ### 关联问题

@@ -57,6 +57,11 @@ def automatic_hard_failures(case: dict[str, Any], record: dict[str, Any]) -> lis
 
 
 def _draft_text(draft: dict[str, Any]) -> str:
+    # Real Agent output is FinalizeArgs-shaped: {form, draft: {...}, image_suggestions}.
+    # Keep accepting flat legacy NoteDraft-shaped records for old baseline files.
+    nested_draft = draft.get("draft")
+    if isinstance(nested_draft, dict):
+        draft = nested_draft
     values: list[str] = []
     for key in ("topic_angle", "body", "cover_copy"):
         value = draft.get(key)
@@ -75,11 +80,22 @@ def _case_has_missing_source_fact(case: dict[str, Any], text: str) -> bool:
         return False
     normalized_text = _compact(text)
     scenario = source.get("scenario")
-    return (
-        isinstance(scenario, str)
-        and len(_compact(scenario)) >= 4
-        and _compact(scenario) not in normalized_text
-    )
+    if not isinstance(scenario, str):
+        return False
+    clauses = [part for part in re.split(r"[，,；;。！？!?]+", scenario) if part.strip()]
+    return any(not _contains_fact(clause, normalized_text) for clause in clauses)
+
+
+def _contains_fact(fact: str, text: str) -> bool:
+    compact_fact = _compact(fact)
+    if not compact_fact:
+        return True
+    if compact_fact in text:
+        return True
+    # Chinese narrative commonly changes sentence-final particles while keeping
+    # the source fact unchanged; this is not semantic inference.
+    relaxed_fact = compact_fact.replace("了", "").replace("啦", "")
+    return bool(relaxed_fact) and relaxed_fact in text
 
 
 def _matches(text: str, patterns: tuple[str, ...]) -> bool:
