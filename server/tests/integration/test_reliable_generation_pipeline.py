@@ -167,6 +167,69 @@ def test_field_regeneration_returns_target_field_suggestion(client: TestClient) 
 
 
 @pytest.mark.integration
+def test_field_suggestion_history_persists_and_marks_stale(client: TestClient) -> None:
+    account_id, column_id = _account_and_column(client)
+    generated = client.post(
+        "/api/v1/notes/generate",
+        json={
+            "account_id": account_id,
+            "column_id": column_id,
+            "form": "experience",
+            "source": _source(),
+        },
+    )
+    assert generated.status_code == 200
+    draft = generated.json()["draft"]
+    note_id = draft["note_id"]
+
+    regenerated = client.post(
+        "/api/v1/notes/regenerate-field",
+        json={"draft": draft, "field": "title"},
+    )
+    assert regenerated.status_code == 200
+    suggestion = regenerated.json()
+    listed = client.get(f"/api/v1/notes/{note_id}/suggestions")
+    assert listed.status_code == 200
+    assert listed.json()[0]["suggestion_id"] == suggestion["suggestion_id"]
+    assert listed.json()[0]["status"] == "pending"
+
+    resolved = client.patch(
+        f"/api/v1/notes/{note_id}/suggestions/{suggestion['suggestion_id']}",
+        json={"status": "rejected"},
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["status"] == "rejected"
+    unchanged = client.get(f"/api/v1/notes/{note_id}")
+    assert unchanged.status_code == 200
+    assert unchanged.json()["title_candidates"] == draft["title_candidates"]
+
+    regenerated_again = client.post(
+        "/api/v1/notes/regenerate-field",
+        json={"draft": draft, "field": "body"},
+    )
+    assert regenerated_again.status_code == 200
+    changed = {
+        "topic_angle": draft["topic_angle"],
+        "title_candidates": draft["title_candidates"],
+        "body": "用户改过的正文",
+        "hashtags": draft["hashtags"],
+        "cover_copy": draft["cover_copy"],
+        "image_suggestions": draft["image_suggestions"],
+        "style_form": draft["style_form"],
+    }
+    saved = client.put(f"/api/v1/notes/{note_id}", json=changed)
+    assert saved.status_code == 200
+    after_edit = client.get(f"/api/v1/notes/{note_id}/suggestions")
+    assert after_edit.status_code == 200
+    body_suggestion = next(
+        item
+        for item in after_edit.json()
+        if item["suggestion_id"] == regenerated_again.json()["suggestion_id"]
+    )
+    assert body_suggestion["status"] == "stale"
+
+
+@pytest.mark.integration
 def test_export_gate_blocks_missing_review_and_blocking_review(client: TestClient) -> None:
     account_id, column_id = _account_and_column(client)
     generated = client.post(

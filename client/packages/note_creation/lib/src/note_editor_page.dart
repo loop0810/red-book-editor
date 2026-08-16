@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app_core/app_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +15,8 @@ class NoteEditorPage extends StatefulWidget {
     this.onRegenerateField,
     this.onSaveDraft,
     this.loadVersions,
+    this.loadSuggestions,
+    this.onUpdateSuggestionStatus,
     this.agentTrace = const [],
     this.styleForm,
     this.aiBaseline,
@@ -24,6 +28,8 @@ class NoteEditorPage extends StatefulWidget {
   final RegenerateField? onRegenerateField;
   final SaveDraft? onSaveDraft;
   final LoadVersions? loadVersions;
+  final LoadSuggestions? loadSuggestions;
+  final UpdateSuggestionStatus? onUpdateSuggestionStatus;
   final List<AgentTraceStep> agentTrace;
   final StyleForm? styleForm;
 
@@ -104,6 +110,9 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     if (baseline == null && widget.loadVersions != null) {
       _loadSavedBaseline();
     }
+    if (widget.loadSuggestions != null) {
+      unawaited(_loadSavedSuggestions());
+    }
   }
 
   @override
@@ -122,6 +131,23 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     for (final field in EditableField.values)
       field: fieldValueForDraft(draft, field),
   };
+
+  Future<void> _loadSavedSuggestions() async {
+    try {
+      final suggestions = await widget.loadSuggestions!(_draft.noteId);
+      if (!mounted) return;
+      var restored = _session;
+      for (final suggestion in suggestions) {
+        restored = restored.addSuggestion(
+          suggestion,
+          baseValue: fieldValueForDraft(_draft, suggestion.field),
+        );
+      }
+      setState(() => _session = restored);
+    } catch (_) {
+      // The editor remains usable with session-only suggestions if history is unavailable.
+    }
+  }
 
   Future<void> _loadSavedBaseline() async {
     try {
@@ -286,18 +312,21 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
         setState(() {
           _session = current.rejectSuggestion(suggestion);
         });
+        unawaited(_syncSuggestionStatus(suggestion, SuggestionStatus.rejected));
         return;
       }
       setState(() {
         _session = current.acceptSuggestion(suggestion, force: true);
         _writeDraftToControllers(_session.draft);
       });
+      unawaited(_syncSuggestionStatus(suggestion, SuggestionStatus.accepted));
       return;
     }
     setState(() {
       _session = current.acceptSuggestion(suggestion);
       _writeDraftToControllers(_session.draft);
     });
+    unawaited(_syncSuggestionStatus(suggestion, SuggestionStatus.accepted));
   }
 
   void _rejectSuggestion(EditableField field) {
@@ -306,6 +335,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     setState(() {
       _session = _sessionWithControllers().rejectSuggestion(suggestion);
     });
+    unawaited(_syncSuggestionStatus(suggestion, SuggestionStatus.rejected));
   }
 
   void _writeDraftToControllers(NoteDraft draft) {
@@ -315,6 +345,33 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     _bodyController.text = draft.body;
     _hashtagsController.text = draft.hashtags.join(' ');
     _coverController.text = draft.coverCopy;
+  }
+
+  Future<void> _syncSuggestionStatus(
+    FieldSuggestion suggestion,
+    SuggestionStatus status,
+  ) async {
+    final callback = widget.onUpdateSuggestionStatus;
+    if (callback == null) return;
+    try {
+      final synced = await callback(suggestion, status);
+      if (!mounted) return;
+      setState(() {
+        _session = EditorSessionState(
+          draft: _session.draft,
+          aiBaseline: _session.aiBaseline,
+          pendingSuggestions: _session.pendingSuggestions
+              .map(
+                (item) => item.suggestionId == synced.suggestionId
+                    ? synced.copyWith(baseValue: item.baseValue)
+                    : item,
+              )
+              .toList(),
+        );
+      });
+    } catch (_) {
+      if (mounted) _showSnackBar('候选状态同步失败，稍后可再次处理');
+    }
   }
 
   String _fieldLabel(String field) {
@@ -349,21 +406,35 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     return Wrap(
       children: [
         for (final segment in diff.segments)
-          Text(
-            segment.text,
-            style: TextStyle(
-              color: switch (segment.kind) {
-                DiffSegmentKind.added => Colors.green.shade800,
-                DiffSegmentKind.removed => Colors.red.shade800,
-                DiffSegmentKind.unchanged => null,
-              },
-              decoration: segment.kind == DiffSegmentKind.removed
-                  ? TextDecoration.lineThrough
-                  : null,
+          Tooltip(
+            message: _diffRangeLabel(segment),
+            child: Text(
+              segment.text,
+              style: TextStyle(
+                color: switch (segment.kind) {
+                  DiffSegmentKind.added => Colors.green.shade800,
+                  DiffSegmentKind.removed => Colors.red.shade800,
+                  DiffSegmentKind.unchanged => null,
+                },
+                decoration: segment.kind == DiffSegmentKind.removed
+                    ? TextDecoration.lineThrough
+                    : null,
+              ),
             ),
           ),
       ],
     );
+  }
+
+  String _diffRangeLabel(DiffSegment segment) {
+    final ranges = <String>[];
+    if (segment.beforeStart != null && segment.beforeEnd != null) {
+      ranges.add('原文 ${segment.beforeStart}–${segment.beforeEnd}');
+    }
+    if (segment.afterStart != null && segment.afterEnd != null) {
+      ranges.add('建议 ${segment.afterStart}–${segment.afterEnd}');
+    }
+    return ranges.isEmpty ? '集合差异' : ranges.join('；');
   }
 
   Widget _baselineDiff(EditableField field) {
@@ -390,7 +461,9 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
 
   Widget _suggestionPanel(EditableField field) {
     final suggestion = _session.suggestionFor(field);
-    if (suggestion == null) return const SizedBox.shrink();
+    final history = _session.suggestionsFor(field);
+    if (suggestion == null && history.isEmpty) return const SizedBox.shrink();
+    if (suggestion == null) return _suggestionHistory(field, history);
     final current = fieldValueForDraft(_session.draft, field);
     final diff = diffFieldValues(
       field: field,
@@ -398,46 +471,93 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
       after: suggestion.value,
     );
     final review = suggestion.review;
-    return Card(
-      margin: const EdgeInsets.only(top: 8),
-      color: Theme.of(context).colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('AI ${_fieldLabel(editableFieldToApi(field))}候选'),
-            const SizedBox(height: 6),
-            Text('当前内容 → AI 建议'),
-            _diffText(diff),
-            if (suggestion.evidence.isNotEmpty ||
-                suggestion.evidenceFactIds.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                '来源证据：${[...suggestion.evidence, ...suggestion.evidenceFactIds].join('、')}',
-              ),
-            ],
-            if (review != null && !review.passed) ...[
-              const SizedBox(height: 8),
-              Text('候选需要复核：${review.findings.length} 项'),
-            ],
-            Row(
+    return Column(
+      children: [
+        Card(
+          margin: const EdgeInsets.only(top: 8),
+          color: Theme.of(context).colorScheme.primaryContainer,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                FilledButton(
-                  onPressed: () => _acceptSuggestion(field),
-                  child: const Text('采纳'),
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: () => _rejectSuggestion(field),
-                  child: const Text('拒绝'),
+                Text('AI ${_fieldLabel(editableFieldToApi(field))}候选'),
+                const SizedBox(height: 6),
+                Text('当前内容 → AI 建议'),
+                _diffText(diff),
+                if (suggestion.evidence.isNotEmpty ||
+                    suggestion.evidenceFactIds.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '来源证据：${[...suggestion.evidence, ...suggestion.evidenceFactIds].join('、')}',
+                  ),
+                ],
+                if (review != null && !review.passed) ...[
+                  const SizedBox(height: 8),
+                  Text('候选需要复核：${review.findings.length} 项'),
+                ],
+                Row(
+                  children: [
+                    FilledButton(
+                      onPressed: () => _acceptSuggestion(field),
+                      child: const Text('采纳'),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: () => _rejectSuggestion(field),
+                      child: const Text('拒绝'),
+                    ),
+                  ],
                 ),
               ],
             ),
-          ],
+          ),
         ),
+        _suggestionHistory(field, history),
+      ],
+    );
+  }
+
+  Widget _suggestionHistory(
+    EditableField field,
+    List<FieldSuggestion> history,
+  ) {
+    if (history.isEmpty) return const SizedBox.shrink();
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      child: ExpansionTile(
+        title: Text('${_fieldLabel(editableFieldToApi(field))}候选历史'),
+        subtitle: Text('共 ${history.length} 条，只有 pending 可以采纳'),
+        children: [
+          for (final suggestion in history)
+            ListTile(
+              dense: true,
+              title: Text(
+                suggestion.textValue,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(_suggestionStatusLabel(suggestion.status)),
+              trailing: suggestion.status == SuggestionStatus.stale
+                  ? const Icon(Icons.warning_amber)
+                  : null,
+            ),
+        ],
       ),
     );
+  }
+
+  String _suggestionStatusLabel(SuggestionStatus status) {
+    switch (status) {
+      case SuggestionStatus.pending:
+        return '待处理';
+      case SuggestionStatus.accepted:
+        return '已采纳';
+      case SuggestionStatus.rejected:
+        return '已拒绝';
+      case SuggestionStatus.stale:
+        return '基础内容已变化';
+    }
   }
 
   Future<void> _showVersions() async {

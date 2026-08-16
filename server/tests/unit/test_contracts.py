@@ -11,6 +11,7 @@ from red_book_editor_server.domain.contracts import (
     ReviewFindingDto,
     RiskLevel,
     SourceExperienceDto,
+    SuggestionStatus,
 )
 
 
@@ -49,6 +50,7 @@ def test_field_suggestion_contract_round_trips_target_value() -> None:
 
     assert suggestion.field is EditableField.HASHTAGS
     assert suggestion.value == ["#育儿日常", "#睡前流程"]
+    assert suggestion.status is SuggestionStatus.PENDING
     assert "body" not in suggestion.model_dump(mode="json")
 
 

@@ -73,6 +73,28 @@ class DraftVersionModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class FieldSuggestionModel(Base):
+    __tablename__ = "field_suggestions"
+    __table_args__ = (
+        Index("ix_field_suggestions_note_status_created", "note_id", "status", "created_at"),
+        Index("ix_field_suggestions_account_id", "account_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    note_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("notes.id", ondelete="CASCADE"))
+    account_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("accounts.id", ondelete="CASCADE"))
+    field: Mapped[str] = mapped_column(String(32))
+    value: Mapped[str | list[str]] = mapped_column(JSONB)
+    base_field_digest: Mapped[str] = mapped_column(String(64))
+    base_content_digest: Mapped[str] = mapped_column(String(64))
+    review: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    evidence: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    evidence_fact_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AssetModel(Base):
     __tablename__ = "assets"
 

@@ -285,6 +285,38 @@ class RedBookEditorApiClient {
     );
   }
 
+  Future<List<FieldSuggestion>> listSuggestions({
+    required String noteId,
+  }) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/api/v1/notes/$noteId/suggestions'),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return (jsonDecode(response.body) as List<dynamic>)
+        .map((json) => FieldSuggestion.fromJson(json as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<FieldSuggestion> updateSuggestionStatus({
+    required String noteId,
+    required String suggestionId,
+    required SuggestionStatus status,
+  }) async {
+    final response = await _client.patch(
+      Uri.parse('$baseUrl/api/v1/notes/$noteId/suggestions/$suggestionId'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({'status': suggestionStatusToApi(status)}),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return FieldSuggestion.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<NoteDraft> saveNote({required NoteDraft draft}) async {
     final response = await _client.put(
       Uri.parse('$baseUrl/api/v1/notes/${draft.noteId}'),

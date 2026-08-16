@@ -48,6 +48,13 @@ class EditableField(StrEnum):
     COVER_COPY = "cover_copy"
 
 
+class SuggestionStatus(StrEnum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    STALE = "stale"
+
+
 class SourceFactDto(BaseModel):
     fact_id: str = Field(min_length=1)
     source_path: str = Field(min_length=1)
@@ -130,7 +137,14 @@ class FieldSuggestionDto(BaseModel):
     review: ReviewResultDto | None = None
     evidence: list[str] = Field(default_factory=list)
     evidence_fact_ids: list[str] = Field(default_factory=list)
+    status: SuggestionStatus = SuggestionStatus.PENDING
     created_at: datetime
+
+
+class SuggestionStatusUpdateDto(BaseModel):
+    status: SuggestionStatus
+    current_field_digest: str | None = None
+    current_content_digest: str | None = None
 
 
 class ToneProfile(BaseModel):

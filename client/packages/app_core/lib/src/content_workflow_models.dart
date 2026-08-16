@@ -12,6 +12,32 @@ enum EditableField { title, body, hashtags, coverCopy }
 
 enum SuggestionStatus { pending, accepted, rejected, stale }
 
+SuggestionStatus suggestionStatusFromApi(String value) {
+  switch (value) {
+    case 'accepted':
+      return SuggestionStatus.accepted;
+    case 'rejected':
+      return SuggestionStatus.rejected;
+    case 'stale':
+      return SuggestionStatus.stale;
+    default:
+      return SuggestionStatus.pending;
+  }
+}
+
+String suggestionStatusToApi(SuggestionStatus status) {
+  switch (status) {
+    case SuggestionStatus.pending:
+      return 'pending';
+    case SuggestionStatus.accepted:
+      return 'accepted';
+    case SuggestionStatus.rejected:
+      return 'rejected';
+    case SuggestionStatus.stale:
+      return 'stale';
+  }
+}
+
 String editableFieldToApi(EditableField field) {
   switch (field) {
     case EditableField.title:
@@ -204,6 +230,7 @@ class FieldSuggestion {
       evidence: (json['evidence'] as List<dynamic>? ?? const []).cast<String>(),
       evidenceFactIds: (json['evidence_fact_ids'] as List<dynamic>? ?? const [])
           .cast<String>(),
+      status: suggestionStatusFromApi(json['status'] as String? ?? 'pending'),
       createdAt: json['created_at'] as String? ?? '',
     );
   }
@@ -218,6 +245,7 @@ class FieldSuggestion {
     'review': review?.toJson(),
     'evidence': evidence,
     'evidence_fact_ids': evidenceFactIds,
+    'status': suggestionStatusToApi(status),
     'created_at': createdAt,
   };
 }

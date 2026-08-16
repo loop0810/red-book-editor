@@ -16,6 +16,34 @@
 
 记录按完成时间倒序追加，不删除历史内容。若一个 change 只部分解决某个问题，应在“覆盖范围”中明确边界，避免把路线图中的计划误认为已经实现。
 
+## 2026-08-16：complete-milestone3-suggestion-history-and-precision-diff
+
+### 关联问题
+
+来源：[`red-book-editor-agent-evolution-roadmap.md`](./red-book-editor-agent-evolution-roadmap.md)
+
+- Milestone 3 遗留体验：字段候选只存在当前编辑会话，关闭页面或更换设备后无法恢复；多候选历史和候选状态不完整；Diff 缺少可定位的文本范围。
+
+OpenSpec：[`complete-milestone3-suggestion-history-and-precision-diff`](../../openspec/changes/archive/2026-08-16-complete-milestone3-suggestion-history-and-precision-diff/)
+
+### 实际改动
+
+- 服务端新增 `field_suggestions` 表和 Alembic migration，保存笔记范围内的候选历史、审核快照、来源证据、基础摘要和 `pending`、`accepted`、`rejected`、`stale` 状态；新增候选历史查询和状态更新 API。
+- 字段重生成对已保存笔记返回并持久化同一 `suggestion_id`，候选状态更新不直接改写笔记；基础字段或完整内容摘要变化时标记候选过期，保留客户端显式保存和审核门禁。
+- Flutter 支持多候选恢复、历史状态展示、采纳/拒绝同步和过期冲突提示；正文按句段/段落、标题和封面文案按字符范围、话题按集合生成可定位 Diff，并处理 Unicode UTF-16 范围。
+- 更新内容工作流契约、`ai-editing-interactions` 主 spec 和 Milestone 3 路线图；持久化边界不包含 prompt、模型原始消息、密钥、访问令牌或图片内容。
+
+### 验证结果
+
+- 服务端 `make lock-check`、`make format-check`、`make typecheck` 通过；`make test` 为 71 passed、16 deselected；使用本机 PostgreSQL 的 integration-test 为 16 passed、71 deselected；migration 已恢复到 Alembic head。
+- Flutter format、`flutter analyze`、根测试和 package tests 通过（根测试 1 passed，package tests 34 passed）。
+- `openspec validate --all --strict` 通过（11 passed，0 failed）；`git diff --check` 通过。
+
+### 覆盖范围与后续问题
+
+- 本次完成 Milestone 3 的候选历史、跨会话恢复和可定位 Diff 遗留体验；Diff 范围用于展示定位，仍不提供 HTML 或平台特定补丁格式。
+- `P1-04` 图片理解和素材绑定，以及 `P1-06` 的自动评分、事实覆盖率、Token/成本记录、版本绑定和完整质量门禁仍未完成；Memory、RAG、MCP 继续留待后续架构迭代。
+
 ## 2026-08-16：harden-milestone3-regression-and-evaluation
 
 ### 关联问题

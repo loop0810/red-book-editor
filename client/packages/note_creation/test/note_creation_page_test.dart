@@ -140,6 +140,48 @@ void main() {
     expect(find.text('AI 标题候选'), findsNothing);
   });
 
+  testWidgets(
+    'restores suggestion history and keeps resolved candidates read-only',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NoteEditorPage(
+            draft: _draft(),
+            loadSuggestions: (noteId) async => [
+              FieldSuggestion(
+                suggestionId: 'suggestion-old',
+                noteId: noteId,
+                field: EditableField.title,
+                value: const ['旧候选'],
+                baseFieldDigest: 'field-digest',
+                baseContentDigest: 'content-digest',
+                status: SuggestionStatus.accepted,
+                createdAt: '2026-08-16T00:00:00Z',
+              ),
+              FieldSuggestion(
+                suggestionId: 'suggestion-new',
+                noteId: noteId,
+                field: EditableField.title,
+                value: const ['新候选'],
+                baseFieldDigest: 'field-digest',
+                baseContentDigest: 'content-digest',
+                createdAt: '2026-08-17T00:00:00Z',
+              ),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('AI 标题候选'), findsOneWidget);
+      expect(find.text('标题候选历史'), findsOneWidget);
+      await tester.tap(find.text('标题候选历史'));
+      await tester.pumpAndSettle();
+      expect(find.text('已采纳'), findsOneWidget);
+      expect(find.text('待处理'), findsOneWidget);
+      expect(find.text('采纳'), findsOneWidget);
+    },
+  );
+
   testWidgets('manual edit shows baseline diff and conflict choice', (
     tester,
   ) async {

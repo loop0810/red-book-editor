@@ -31,6 +31,12 @@ typedef RegenerateField =
       StyleForm? form,
     });
 typedef SaveDraft = Future<NoteDraft> Function(NoteDraft draft);
+typedef LoadSuggestions = Future<List<FieldSuggestion>> Function(String noteId);
+typedef UpdateSuggestionStatus =
+    Future<FieldSuggestion> Function(
+      FieldSuggestion suggestion,
+      SuggestionStatus status,
+    );
 
 // 版本读取和草稿打开也用回调隔离，页面无需知道数据来自 SQLite、API 还是内存。
 typedef LoadVersions = Future<List<NoteDraftVersion>> Function(String noteId);

@@ -61,6 +61,15 @@ class WorkbenchHomePage extends ConsumerWidget {
               ref.read(apiClientProvider).saveNote(draft: current),
           loadVersions: (noteId) =>
               ref.read(apiClientProvider).listNoteVersions(noteId: noteId),
+          loadSuggestions: (noteId) =>
+              ref.read(apiClientProvider).listSuggestions(noteId: noteId),
+          onUpdateSuggestionStatus: (suggestion, status) => ref
+              .read(apiClientProvider)
+              .updateSuggestionStatus(
+                noteId: suggestion.noteId,
+                suggestionId: suggestion.suggestionId,
+                status: status,
+              ),
           onPublish: () => _openPublishRecord(context, ref, draft),
         ),
       ),
@@ -165,6 +174,17 @@ class WorkbenchHomePage extends ConsumerWidget {
                               loadVersions: (noteId) => ref
                                   .read(apiClientProvider)
                                   .listNoteVersions(noteId: noteId),
+                              loadSuggestions: (noteId) => ref
+                                  .read(apiClientProvider)
+                                  .listSuggestions(noteId: noteId),
+                              onUpdateSuggestionStatus: (suggestion, status) =>
+                                  ref
+                                      .read(apiClientProvider)
+                                      .updateSuggestionStatus(
+                                        noteId: suggestion.noteId,
+                                        suggestionId: suggestion.suggestionId,
+                                        status: status,
+                                      ),
                               onPublish: () => _openPublishRecord(
                                 context,
                                 ref,

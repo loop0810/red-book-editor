@@ -10,10 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from red_book_editor_server.domain.contracts import (
     AccountProfileDto,
     ContentColumnDto,
+    EditableField,
+    FieldSuggestionDto,
     NoteDraftDto,
     NoteStatus,
     ReviewResultDto,
     SourceExperienceDto,
+    SuggestionStatus,
     StyleForm,
 )
 from red_book_editor_server.domain.agent import AgentFailureCode, AgentPhase, AgentRunDiagnostics
@@ -30,7 +33,12 @@ from red_book_editor_server.infrastructure.models import (
     AgentRunModel,
     ContentColumnModel,
     DraftVersionModel,
+    FieldSuggestionModel,
     NoteModel,
+)
+from red_book_editor_server.modules.content_workflow.fact_ledger import (
+    content_digest,
+    field_digest,
 )
 from red_book_editor_server.modules.content_workflow.review import status_for_review
 
@@ -181,6 +189,125 @@ def _content_from_draft(draft: NoteDraftDto) -> dict[str, object]:
             "review",
         },
     )
+
+
+class SqlAlchemyFieldSuggestionRepository:
+    """保存笔记范围的字段候选，并按当前草稿摘要识别过期候选。"""
+
+    async def create(
+        self, suggestion: FieldSuggestionDto, session: AsyncSession
+    ) -> FieldSuggestionDto:
+        note = await session.get(NoteModel, suggestion.note_id)
+        if note is None:
+            raise LookupError("note_not_found")
+        model = FieldSuggestionModel(
+            id=suggestion.suggestion_id,
+            note_id=suggestion.note_id,
+            account_id=note.account_id,
+            field=suggestion.field.value,
+            value=suggestion.value,
+            base_field_digest=suggestion.base_field_digest,
+            base_content_digest=suggestion.base_content_digest,
+            review=suggestion.review.model_dump(mode="json") if suggestion.review else None,
+            evidence=suggestion.evidence,
+            evidence_fact_ids=suggestion.evidence_fact_ids,
+            status=suggestion.status.value,
+        )
+        session.add(model)
+        await session.commit()
+        await session.refresh(model)
+        return self._to_dto(model)
+
+    async def list_for_note(
+        self, note_id: UUID, session: AsyncSession
+    ) -> list[FieldSuggestionDto] | None:
+        note = await session.get(NoteModel, note_id)
+        if note is None:
+            return None
+        current = SqlAlchemyNoteRepository._to_dto(note)
+        current_content_digest = content_digest(current)
+        result = await session.execute(
+            select(FieldSuggestionModel)
+            .where(FieldSuggestionModel.note_id == note_id)
+            .order_by(FieldSuggestionModel.created_at.desc())
+        )
+        suggestions = list(result.scalars())
+        stale_changed = False
+        for suggestion in suggestions:
+            if suggestion.status == SuggestionStatus.PENDING.value and (
+                suggestion.base_content_digest != current_content_digest
+                or suggestion.base_field_digest
+                != field_digest(current, EditableField(suggestion.field))
+            ):
+                suggestion.status = SuggestionStatus.STALE.value
+                suggestion.updated_at = datetime.now(UTC)
+                stale_changed = True
+        if stale_changed:
+            await session.commit()
+        return [self._to_dto(suggestion) for suggestion in suggestions]
+
+    async def update_status(
+        self,
+        *,
+        note_id: UUID,
+        suggestion_id: UUID,
+        status: SuggestionStatus,
+        current_field_digest: str | None,
+        current_content_digest: str | None,
+        session: AsyncSession,
+    ) -> FieldSuggestionDto:
+        suggestion = await session.scalar(
+            select(FieldSuggestionModel).where(
+                FieldSuggestionModel.id == suggestion_id,
+                FieldSuggestionModel.note_id == note_id,
+            )
+        )
+        if suggestion is None:
+            raise LookupError("suggestion_not_found")
+        if status is SuggestionStatus.PENDING:
+            raise ValueError("invalid_suggestion_status")
+        if suggestion.status != SuggestionStatus.PENDING.value:
+            return self._to_dto(suggestion)
+        note = await session.get(NoteModel, note_id)
+        if note is None:
+            raise LookupError("note_not_found")
+        current = SqlAlchemyNoteRepository._to_dto(note)
+        actual_field_digest = field_digest(current, EditableField(suggestion.field))
+        actual_content_digest = content_digest(current)
+        if status is SuggestionStatus.ACCEPTED and (
+            (current_field_digest is not None and current_field_digest != actual_field_digest)
+            or (
+                current_content_digest is not None
+                and current_content_digest != actual_content_digest
+            )
+            or suggestion.base_field_digest != actual_field_digest
+            or suggestion.base_content_digest != actual_content_digest
+        ):
+            suggestion.status = SuggestionStatus.STALE.value
+            suggestion.updated_at = datetime.now(UTC)
+            await session.commit()
+            return self._to_dto(suggestion)
+        suggestion.status = status.value
+        suggestion.updated_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(suggestion)
+        return self._to_dto(suggestion)
+
+    @staticmethod
+    def _to_dto(suggestion: FieldSuggestionModel) -> FieldSuggestionDto:
+        return FieldSuggestionDto(
+            suggestion_id=suggestion.id,
+            note_id=suggestion.note_id,
+            field=EditableField(suggestion.field),
+            value=suggestion.value,
+            base_field_digest=suggestion.base_field_digest,
+            base_content_digest=suggestion.base_content_digest,
+            review=ReviewResultDto.model_validate(suggestion.review) if suggestion.review else None,
+            evidence=suggestion.evidence,
+            evidence_fact_ids=suggestion.evidence_fact_ids,
+            status=SuggestionStatus(suggestion.status),
+            created_at=suggestion.created_at,
+        )
 
 
 class SqlAlchemyAgentRunRepository:

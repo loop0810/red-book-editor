@@ -341,6 +341,42 @@ void main() {
       );
     });
 
+    test('loads suggestion history and updates its status', () async {
+      final requests = <http.Request>[];
+      final client = _client((request) async {
+        requests.add(request);
+        if (request.method == 'GET') {
+          return http.Response.bytes(
+            utf8.encode(
+              jsonEncode([
+                {..._fieldSuggestionJson, 'status': 'pending'},
+              ]),
+            ),
+            200,
+          );
+        }
+        return http.Response.bytes(
+          utf8.encode(
+            jsonEncode({..._fieldSuggestionJson, 'status': 'rejected'}),
+          ),
+          200,
+        );
+      });
+      final suggestions = await client.listSuggestions(
+        noteId: _draftJson['note_id'] as String,
+      );
+      final updated = await client.updateSuggestionStatus(
+        noteId: _draftJson['note_id'] as String,
+        suggestionId: 'suggestion-1',
+        status: SuggestionStatus.rejected,
+      );
+      expect(suggestions.single.status, SuggestionStatus.pending);
+      expect(updated.status, SuggestionStatus.rejected);
+      expect(requests[0].url.path, endsWith('/suggestions'));
+      expect(requests[1].method, 'PATCH');
+      expect(jsonDecode(requests[1].body)['status'], 'rejected');
+    });
+
     test('saveNote sends style form metadata', () async {
       final requests = <http.Request>[];
       final client = _client((request) async {

@@ -25,14 +25,17 @@ class EditorSessionState {
   final List<FieldSuggestion> pendingSuggestions;
 
   FieldSuggestion? suggestionFor(EditableField field) {
-    for (final suggestion in pendingSuggestions.reversed) {
-      if (suggestion.field == field &&
-          suggestion.status == SuggestionStatus.pending) {
-        return suggestion;
-      }
+    for (final suggestion in suggestionsFor(field)) {
+      if (suggestion.status == SuggestionStatus.pending) return suggestion;
     }
     return null;
   }
+
+  List<FieldSuggestion> suggestionsFor(EditableField field) =>
+      pendingSuggestions
+          .where((suggestion) => suggestion.field == field)
+          .toList()
+        ..sort((left, right) => right.createdAt.compareTo(left.createdAt));
 
   bool isDirty(EditableField field) {
     final baseline = aiBaseline[field];
@@ -42,7 +45,11 @@ class EditorSessionState {
 
   bool get hasDirtyFields => EditableField.values.any(isDirty);
 
-  bool get hasConflicts => pendingSuggestions.any(hasConflict);
+  bool get hasConflicts => pendingSuggestions.any(
+    (suggestion) =>
+        suggestion.status == SuggestionStatus.pending &&
+        hasConflict(suggestion),
+  );
 
   bool hasConflict(FieldSuggestion suggestion) {
     final baseValue = suggestion.baseValue;
@@ -59,7 +66,9 @@ class EditorSessionState {
       draft: draft,
       aiBaseline: aiBaseline,
       pendingSuggestions: [
-        ...pendingSuggestions.where((item) => item.field != suggestion.field),
+        ...pendingSuggestions.where(
+          (item) => item.suggestionId != suggestion.suggestionId,
+        ),
         withBase,
       ],
     );
@@ -69,23 +78,33 @@ class EditorSessionState {
     FieldSuggestion suggestion, {
     bool force = false,
   }) {
+    if (suggestion.status != SuggestionStatus.pending) return this;
     if (!force && hasConflict(suggestion)) return this;
     final updated = _applyValue(draft, suggestion.field, suggestion.value);
     return EditorSessionState(
       draft: updated,
       aiBaseline: aiBaseline,
       pendingSuggestions: pendingSuggestions
-          .where((item) => item.suggestionId != suggestion.suggestionId)
+          .map(
+            (item) => item.suggestionId == suggestion.suggestionId
+                ? item.copyWith(status: SuggestionStatus.accepted)
+                : item,
+          )
           .toList(),
     );
   }
 
   EditorSessionState rejectSuggestion(FieldSuggestion suggestion) {
+    if (suggestion.status != SuggestionStatus.pending) return this;
     return EditorSessionState(
       draft: draft,
       aiBaseline: aiBaseline,
       pendingSuggestions: pendingSuggestions
-          .where((item) => item.suggestionId != suggestion.suggestionId)
+          .map(
+            (item) => item.suggestionId == suggestion.suggestionId
+                ? item.copyWith(status: SuggestionStatus.rejected)
+                : item,
+          )
           .toList(),
     );
   }

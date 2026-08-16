@@ -13,12 +13,14 @@ from red_book_editor_server.domain.contracts import (
     FieldSuggestionDto,
     NoteDraftDto,
     SourceExperienceDto,
+    SuggestionStatusUpdateDto,
     StyledNoteResponseDto,
     StyleForm,
 )
 from red_book_editor_server.domain.ports import ModelGatewayError
 from red_book_editor_server.infrastructure.repositories import (
     SqlAlchemyAccountColumnContextRepository,
+    SqlAlchemyFieldSuggestionRepository,
     SqlAlchemyNoteRepository,
 )
 from red_book_editor_server.modules.content_workflow.generator import ContentGenerationError
@@ -98,15 +100,23 @@ async def restyle_note(request: RestyleNoteRequest) -> StyledNoteResponseDto:
 
 
 @router.post("/regenerate-field", response_model=FieldSuggestionDto)
-async def regenerate_field(request: RegenerateFieldRequest) -> FieldSuggestionDto:
+async def regenerate_field(
+    request: RegenerateFieldRequest,
+    session: AsyncSession = Depends(database_session),
+) -> FieldSuggestionDto:
     settings = get_settings()
     service = _build_service(settings)
     try:
-        return await service.regenerate_field(
+        suggestion = await service.regenerate_field(
             request.draft,
             request.field,
             request.effective_form,
         )
+        try:
+            return await SqlAlchemyFieldSuggestionRepository().create(suggestion, session)
+        except LookupError:
+            # Draft-only callers remain compatible with the original session-only behavior.
+            return suggestion
     except StyleFormRequiredError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -117,6 +127,42 @@ async def regenerate_field(request: RegenerateFieldRequest) -> FieldSuggestionDt
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="content_generation_failed",
         ) from error
+
+
+@router.get("/{note_id}/suggestions", response_model=list[FieldSuggestionDto])
+async def list_suggestions(
+    note_id: UUID,
+    session: AsyncSession = Depends(database_session),
+) -> list[FieldSuggestionDto]:
+    suggestions = await SqlAlchemyFieldSuggestionRepository().list_for_note(note_id, session)
+    if suggestions is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="note_not_found")
+    return suggestions
+
+
+@router.patch(
+    "/{note_id}/suggestions/{suggestion_id}",
+    response_model=FieldSuggestionDto,
+)
+async def update_suggestion_status(
+    note_id: UUID,
+    suggestion_id: UUID,
+    payload: SuggestionStatusUpdateDto,
+    session: AsyncSession = Depends(database_session),
+) -> FieldSuggestionDto:
+    try:
+        return await SqlAlchemyFieldSuggestionRepository().update_status(
+            note_id=note_id,
+            suggestion_id=suggestion_id,
+            status=payload.status,
+            current_field_digest=payload.current_field_digest,
+            current_content_digest=payload.current_content_digest,
+            session=session,
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
 
 
 def _build_service(settings: object, session: AsyncSession | None = None) -> ContentWorkflowService:

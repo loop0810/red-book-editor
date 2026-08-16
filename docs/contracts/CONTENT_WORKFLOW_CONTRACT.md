@@ -18,7 +18,7 @@
 | `StyledNoteResponse` | 风格化草稿 + `AgentTrace` 的响应结构 |
 | `AgentRun` | 异步 Agent 运行的状态、阶段、诊断、尝试次数和关联笔记引用 |
 | `AgentRunEvent` | AgentRun 的有序阶段/模型/工具/终态事件，可通过 SSE 断线续读 |
-| `FieldSuggestion` | 仅针对一个可编辑字段的会话内 AI 候选、基础摘要、审核结果和来源证据 |
+| `FieldSuggestion` | 针对一个可编辑字段、绑定笔记的可恢复 AI 候选历史、基础摘要、审核结果和来源证据 |
 | `EditableField` | `title` / `body` / `hashtags` / `cover_copy` 四个规范化字段名 |
 
 ## 状态
@@ -50,17 +50,19 @@
 - `POST /api/v1/notes/generate`：请求体新增必填 `form`（`StyleForm`），响应为 `StyledNoteResponse`（`draft` + `agent_trace`）。
 - `POST /api/v1/notes/style`：对已有草稿按 `form` 重新风格化，请求体 `{draft, form}`，响应为 `StyledNoteResponse`。
 - `POST /api/v1/notes/regenerate-field`：请求体为 `{draft, field, form?}`，`field` 只能是 `title`、`body`、`hashtags` 或 `cover_copy`；响应为目标字段 `FieldSuggestion`，而不是完整 `NoteDraft`。`form` 缺失时沿用草稿的 `style_form`，两者都缺失返回 HTTP `409` / `style_form_required`；无效字段由请求校验返回 HTTP `422`。
+- `GET /api/v1/notes/{note_id}/suggestions`：读取该笔记的候选历史，按创建时间倒序返回 `pending`、`accepted`、`rejected` 和 `stale` 候选；当前字段或完整内容 digest 变化时，未决候选返回 `stale`。
+- `PATCH /api/v1/notes/{note_id}/suggestions/{suggestion_id}`：只更新候选状态，不修改笔记正文；允许显式标记 `accepted`、`rejected` 或 `stale`，重复更新已结束状态保持幂等。
 
 `FieldSuggestion` 至少包含：
 
 - `suggestion_id`、`note_id`、`field` 和候选 `value`；标题与话题的 `value` 保持字符串列表，正文与封面文案保持字符串；
 - `base_field_digest` 和 `base_content_digest`，表示请求时目标字段及完整可编辑内容的基础摘要；
 - 候选完整草稿计算出的 `review`，以及目标字段相关的 `evidence` / `evidence_fact_ids`；
-- `created_at`。pending suggestion 只属于客户端当前编辑会话，不写入数据库，也不保证关闭编辑器后恢复。
+- `status`（`pending` / `accepted` / `rejected` / `stale`）和 `created_at`。已保存笔记的候选写入服务端历史，但不保存 prompt、模型原始消息、密钥、访问令牌或图片内容。
 
-客户端在发起请求前保存目标字段的本地基础值。候选返回后通过客户端 Diff 展示“当前内容 → AI 建议”，用户必须显式采纳或拒绝；采纳遇到基础值冲突时必须明确选择，不能静默覆盖。采纳只改变本地会话草稿，保存时仍发送完整草稿并重新执行 Fact Ledger、Claim Audit、`NoteStatus` 和导出门禁。
+客户端在发起请求前保存目标字段的本地基础值，并在打开已保存笔记时加载候选历史。候选通过客户端 Diff 展示“当前内容 → AI 建议”，用户必须显式采纳或拒绝；采纳遇到基础值冲突或 `stale` 状态时必须明确处理，不能静默覆盖。候选状态更新不直接修改笔记，保存时仍发送完整草稿并重新执行 Fact Ledger、Claim Audit、`NoteStatus` 和导出门禁。
 
-客户端还可以展示可靠 AI 初稿与当前编辑之间的 Diff：正文按段落/句子优先，短文本按片段，话题按集合。服务端不返回 HTML 或平台特定 Diff 标记；来源关系使用审核证据和字段级 `matched_text` 展示，不伪造字符偏移。
+客户端还可以展示可靠 AI 初稿与当前编辑之间的 Diff：正文按段落/句子优先并提供 before/after 文本范围，短文本按字符片段，话题按集合且不伪造字符范围。服务端不返回 HTML 或平台特定 Diff 标记；来源关系使用审核证据和字段级 `matched_text` 展示。
 
 `NoteDraft`、草稿保存请求、生成响应和字段重生成请求中的 `style_form` 均可为空，以兼容旧草稿。新生成和显式风格重写必须保存该值。
 
@@ -85,6 +87,8 @@ AgentRun 只保存关联笔记和运行诊断，不保存完整 prompt、模型�
 - `POST /api/v1/notes/generate`：生成结构化笔记草稿
 - `POST /api/v1/notes/style`：按表达形式重新风格化已有草稿
 - `POST /api/v1/notes/regenerate-field`：局部重新生成
+- `GET /api/v1/notes/{note_id}/suggestions`：读取字段候选历史
+- `PATCH /api/v1/notes/{note_id}/suggestions/{suggestion_id}`：更新候选状态
 - `POST /api/v1/agent-runs`：创建异步 Agent 运行
 - `GET /api/v1/agent-runs/{run_id}`：读取 AgentRun 状态和诊断
 - `GET /api/v1/agent-runs/{run_id}/events`：读取带游标的 SSE 运行事件
