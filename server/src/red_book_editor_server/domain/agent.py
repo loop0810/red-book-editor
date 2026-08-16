@@ -205,6 +205,8 @@ class AgentRuntime:
         current_phase = AgentPhase.COLLECT_CONTEXT
         phase_started = time.monotonic()
         partial_result: Any | None = None
+        # diagnostics 在整个循环中累加，失败时也原样带出；这让上层能够区分
+        # 模型不可用、预算耗尽、用户取消和最终校验失败，而不是只看到一个 500。
 
         def diagnostics(
             status: AgentRunStatus,
@@ -285,18 +287,22 @@ class AgentRuntime:
             if remaining <= 0:
                 fail(AgentFailureCode.STAGE_TIMEOUT, AgentRunStatus.BUDGET_EXHAUSTED)
             try:
+                # 每个阶段都使用剩余预算计算超时，避免一次慢模型调用吞掉整条 Agent 运行的预算。
                 return await asyncio.wait_for(factory(), timeout=remaining)
             except asyncio.TimeoutError:
                 fail(AgentFailureCode.STAGE_TIMEOUT, AgentRunStatus.BUDGET_EXHAUSTED)
 
         await emit("phase", current_phase.value, f"进入阶段：{current_phase.value}")
         for _ in range(self._max_steps):
+            # 一轮循环只允许模型决策、白名单工具执行、再回填上下文；
+            # max_steps/max_tool_calls/max_revisions 是服务端保险丝，不由模型自行修改。
             steps += 1
             await check_cancelled()
             # 一轮循环只有两种结果：模型要求工具，或模型尝试提交最终答案。
             # max_steps 是保险丝，独立预算负责防止特定类型的循环。
             response = await invoke(lambda: self._gateway.chat(messages, tools=tool_schemas))
             model_calls += 1
+            # usage 只累加计数，不保存供应商原始响应，既服务于成本统计也保持隐私边界。
             if response.usage is not None:
                 usage_available = True
                 prompt_tokens += response.usage.prompt_tokens
@@ -386,6 +392,7 @@ class AgentRuntime:
             await emit("phase", current_phase.value, f"进入阶段：{current_phase.value}")
             validation = final_validator(response.content or "")
             if validation.ok:
+                # 只有领域 validator 通过，模型输出才会离开 AgentRuntime 成为业务对象。
                 await emit(
                     "terminal",
                     AgentRunStatus.COMPLETED.value,
@@ -399,6 +406,7 @@ class AgentRuntime:
                 )
             partial_result = validation.result or partial_result
             revisions += 1
+            # 结构化校验失败会进入有限修订循环；超过预算直接失败，避免无限重复生成。
             record_error(validation.error)
             set_phase(AgentPhase.REVISE)
             if self._max_same_error and repeated_errors >= self._max_same_error:

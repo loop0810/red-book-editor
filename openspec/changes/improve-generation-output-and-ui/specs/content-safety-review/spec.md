@@ -1,10 +1,4 @@
-# content-safety-review Specification
-
-## Purpose
-
-在不破坏用户正常创作体验的前提下，通过领域策略包识别真实的安全和事实风险；内部审核必须可追溯，但普通用户只看到必要、准确、可行动的提示。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Check account scope
 

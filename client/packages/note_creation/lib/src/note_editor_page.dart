@@ -274,6 +274,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
         form: widget.styleForm ?? _draft.styleForm,
       );
       if (!mounted) return;
+      // 候选到达后只进入 session/history，不写入 Controller；用户仍能继续编辑当前内容。
       setState(() {
         _session = _session.addSuggestion(suggestion, baseValue: baseValue);
       });
@@ -290,6 +291,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     final suggestion = current.suggestionFor(field);
     if (suggestion == null) return;
     if (current.hasConflict(suggestion)) {
+      // 候选基于旧 digest 时必须先询问用户，避免异步响应覆盖刚刚完成的手动编辑。
       final choice = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
@@ -354,6 +356,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     final callback = widget.onUpdateSuggestionStatus;
     if (callback == null) return;
     try {
+      // 本地先完成采纳/拒绝，服务端同步失败只提示用户，不回滚编辑器里的明确选择。
       final synced = await callback(suggestion, status);
       if (!mounted) return;
       setState(() {

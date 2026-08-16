@@ -1,10 +1,4 @@
-# account-workspace Specification
-
-## Purpose
-
-为每个内容账号提供可复用的领域、定位、语气、边界和栏目上下文，使每次生成都使用真实账号配置，并为未来多账号、多领域隔离提供基础。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Configure an account profile
 

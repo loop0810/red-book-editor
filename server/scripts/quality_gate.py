@@ -14,6 +14,8 @@ from evals.agent_baseline.evaluation_metadata import (
 from evals.agent_baseline.hard_failures import automatic_hard_failures, fact_coverage
 from scripts.validate_agent_eval import load_json, validate_cases
 
+# 质量门禁故意是 fail-closed：版本、运行、人工评分和成本任一证据缺失，
+# 即使平均分看起来不错，也不能生成“通过”的结论。
 ROOT = Path(__file__).resolve().parents[1]
 CASES_PATH = ROOT / "evals" / "agent_baseline" / "cases.json"
 RUNS_DIR = ROOT / "evals" / "agent_baseline" / "runs"
@@ -56,6 +58,8 @@ def _expected_identities(cases: list[dict[str, Any]], repetitions: int) -> set[t
 def validate_manifest_binding(
     run: dict[str, Any], manifest: dict[str, Any], cases: list[dict[str, Any]]
 ) -> list[str]:
+    # 先验证这批数据是不是“当前这套评测”的产物，再计算指标；
+    # 否则旧 prompt/案例集的好成绩可能被错误地当成新版本证据。
     issues: list[str] = []
     context = run.get("evaluation_context")
     if run.get("schema_version", 0) < 4 or not isinstance(context, dict):
@@ -192,6 +196,8 @@ def validate_scores(
 def calculate_metrics(
     run: dict[str, Any], scores: dict[tuple[str, int], dict[str, Any]]
 ) -> dict[str, Any]:
+    # 运行指标和人工指标在同一个函数汇总，报告与退出码复用同一份结果，
+    # 避免命令行显示通过但报告内容不一致。
     records = _run_records(run)
     count = len(records)
     succeeded = sum(record.get("status") == "succeeded" for record in records)
@@ -388,6 +394,8 @@ def evaluate_gate(
     cases: list[dict[str, Any]],
     baseline: tuple[dict[str, Any], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    # binding/score validation 不会短路 metrics 计算：失败报告仍要尽量给出
+    # 实际值和对应案例，方便定位下一轮需要修复的主链路。
     binding_issues = validate_manifest_binding(run, manifest, cases)
     score_issues, indexed_scores = validate_scores(run, scores)
     metrics = calculate_metrics(run, indexed_scores)

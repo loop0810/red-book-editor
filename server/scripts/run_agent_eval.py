@@ -80,6 +80,8 @@ async def run_case(
     started = time.perf_counter()
     trace: list[AgentTraceStep] = []
     try:
+        # 每个 case/attempt 独立执行并保留失败记录；不能因为某一条模型调用失败，
+        # 就让整批 baseline 静默缺项或把失败伪装成低分成功。
         source = SourceExperienceDto.model_validate(case["source"])
         form = StyleForm(case["form"])
         result = await style_draft(gateway, source=source, neutral_draft=None, form=form)  # type: ignore[arg-type]
@@ -288,6 +290,8 @@ async def main(args: argparse.Namespace) -> Path:
         input_rate_usd_per_million=input_rate,
         output_rate_usd_per_million=output_rate,
     )
+    # 运行上下文只记录版本、价格和配置摘要；真实 prompt、原始模型消息和 key
+    # 不进入 JSON，避免评测文件反过来成为敏感数据副本。
     records: list[dict[str, Any]] = []
     for case in cases:
         for attempt in range(1, args.repetitions + 1):

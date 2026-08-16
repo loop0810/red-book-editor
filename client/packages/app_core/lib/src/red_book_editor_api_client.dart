@@ -53,6 +53,7 @@ class RedBookEditorApiClient {
     required SourceExperience source,
     required StyleForm form,
   }) async {
+    // 异步生成先创建服务端 AgentRun，再通过事件流读取进度；页面不直接等待模型 HTTP 请求。
     final response = await _client.post(
       Uri.parse('$baseUrl/api/v1/agent-runs'),
       headers: {'content-type': 'application/json'},
@@ -210,6 +211,8 @@ class RedBookEditorApiClient {
     void Function(AgentRunEvent event)? onEvent,
   }) async {
     final trace = <AgentTraceStep>[];
+    // SSE 只接收阶段/模型/工具的摘要，用于 UI 展示；终态后重新读取 Note，
+    // 这样客户端不会把事件摘要误当成最终草稿来源。
     await for (final event in watchAgentRunEvents(runId: run.runId)) {
       onEvent?.call(event);
       if (event.eventType == 'phase' ||
@@ -229,6 +232,7 @@ class RedBookEditorApiClient {
       }
     }
     final finished = await getAgentRun(runId: run.runId);
+    // completed 才允许进入编辑器；failed/cancelled/interrupted 必须保留为可恢复错误。
     if (finished.status != 'completed') {
       throw ApiRequestException(
         409,
@@ -268,6 +272,7 @@ class RedBookEditorApiClient {
     required String field,
     StyleForm? form,
   }) async {
+    // 字段重生成返回候选历史，不直接改写当前 Note；采纳动作由编辑器另行确认并同步状态。
     final response = await _client.post(
       Uri.parse('$baseUrl/api/v1/notes/regenerate-field'),
       headers: {'content-type': 'application/json'},
@@ -304,6 +309,7 @@ class RedBookEditorApiClient {
     required String suggestionId,
     required SuggestionStatus status,
   }) async {
+    // 状态更新带有 note_id/suggestion_id 双重范围，服务端据此阻止跨笔记误操作。
     final response = await _client.patch(
       Uri.parse('$baseUrl/api/v1/notes/$noteId/suggestions/$suggestionId'),
       headers: {'content-type': 'application/json'},

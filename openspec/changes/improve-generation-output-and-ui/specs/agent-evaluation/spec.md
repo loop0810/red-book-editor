@@ -1,10 +1,4 @@
-# agent-evaluation Specification
-
-## Purpose
-
-为真实模型内容 Agent 建立一套脱敏、可重复和可人工复核的质量基线，使主题重心、账号/风格适配、事实保真、安全、用户价值和编辑成本都有明确的回归依据；育儿是第一个领域样本，而不是评测模型的唯一结构。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Maintain representative domain-aware evaluation cases
 

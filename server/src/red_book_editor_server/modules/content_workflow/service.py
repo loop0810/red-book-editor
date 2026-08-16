@@ -116,6 +116,8 @@ class ContentWorkflowService:
         cancel_check: Callable[[], Awaitable[bool]] | None = None,
         event_sink: Callable[[AgentRuntimeEvent], Awaitable[None]] | None = None,
     ) -> WorkflowResult:
+        # 生成流程先检查取消，再加载账号/栏目上下文；只有通过上下文校验，
+        # Agent 才能拿到正确的表达边界。模型生成和 stub 生成最终都会汇合到同一审核出口。
         if cancel_check is not None and await cancel_check():
             raise AgentRunError(
                 "agent_cancelled",
@@ -128,6 +130,8 @@ class ContentWorkflowService:
             )
         account, column = await self._load_context(account_id, column_id)
         if self._model_provider == "deepseek":
+            # 真实模型路径由 styling Agent 负责工具循环和结构化输出，
+            # 本服务只负责把领域上下文传入，并把最终参数转换成 NoteDraft。
             finalized, trace, diagnostics = await self._style(
                 source=source,
                 neutral_draft=None,
@@ -144,6 +148,8 @@ class ContentWorkflowService:
                 source=source,
             )
         else:
+            # stub 只用于本地开发和测试，不模拟模型行为；但仍补齐 style_form，
+            # 这样后续审核、保存和字段重生成与真实模型路径保持同一契约。
             draft = await generate_with_retry(
                 self._generator,
                 source,
@@ -158,6 +164,7 @@ class ContentWorkflowService:
                 steps=0,
             )
         if cancel_check is not None and await cancel_check():
+            # 生成完成后再次检查取消，避免用户在审核前取消却仍把结果当成成功返回。
             raise AgentRunError(
                 "agent_cancelled",
                 [],
@@ -199,6 +206,8 @@ class ContentWorkflowService:
         field: FieldName,
         form: StyleForm | None = None,
     ) -> FieldSuggestionDto:
+        # 字段重生成只产生候选，不直接修改当前草稿；客户端必须显式采纳或拒绝。
+        # form 缺失时不能安全推断风格，因此宁可返回冲突，也不使用默认值悄悄生成。
         effective_form = form or draft.style_form
         if effective_form is None:
             raise StyleFormRequiredError("style_form_required")
@@ -253,6 +262,8 @@ class ContentWorkflowService:
         *,
         diagnostics: AgentRunDiagnostics | None = None,
     ) -> WorkflowResult:
+        # 所有生成入口在返回前都经过同一个 Fact Ledger / Claim Audit 审核出口，
+        # 防止主生成、重写和 stub 路径各自维护一套不同的状态判断。
         review = await review_draft(draft)
         trace = [
             *trace,
@@ -306,6 +317,8 @@ class ContentWorkflowService:
     ) -> dict[str, object]:
         if self._gateway is None:
             raise ContentGenerationError("model_gateway_missing")
+        # 请求中携带完整草稿是为了让模型理解上下文，但输出 schema 只允许目标字段；
+        # 服务端随后还会把候选合并回内存副本并重新审核，不能把 prompt 约束当成安全边界。
         schema = {
             "title": '{"title_candidates":["..."]}',
             "body": '{"body":"..."}',

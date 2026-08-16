@@ -1,10 +1,4 @@
-# asset-and-publish-records Specification
-
-## Purpose
-
-为内容提供图片素材、草稿保存和手动发布后的复盘记录；这些能力服务于内容生产，但不应遮挡首次生成时的核心文案结果。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Manage note assets
 

@@ -1,22 +1,4 @@
-# fact-ledger-and-claim-audit Specification
-
-## Purpose
-
-为每篇内容建立可追溯的来源事实边界并审计生成内容中的关键声明，防止来源外经历、结果或安全结论被当作真实事实；审计证据属于内部质量能力，不是普通用户的默认页面内容。
-
-## Requirements
-
-### Requirement: Build a source fact ledger
-
-系统 SHALL 根据用户提交的 `ContentBrief` 及领域上下文建立结构化事实账本，至少区分用户明确提供的事实、用户观察到的结果、用户个人观点、主题重心、未知信息和禁止推断边界；系统不得把模型生成的内容加入已确认事实。
-
-#### Scenario: Record source facts with provenance
-- **WHEN** 用户提交明确主题、原始素材和领域补充信息
-- **THEN** 系统为每项来源内容记录可追溯的来源位置和事实类别，并保留原始来源内容
-
-#### Scenario: Keep unknown facts outside confirmed facts
-- **WHEN** 来源没有提供药物名称、剂量、环境、产品属性、宴会细节或确定结果
-- **THEN** 系统将这些信息视为未知或禁止推断内容，不得在事实账本中标记为已确认
+## MODIFIED Requirements
 
 ### Requirement: Audit generated claims against the source ledger
 
@@ -32,7 +14,7 @@
 
 #### Scenario: Uncertain interpretation
 - **WHEN** 生成内容是对来源事实的合理改写，但无法确认其是否表达了来源之外的确定结论
-- **THEN** 系统保留 `uncertain` 内部状态，并不得自动显示疾病/用药等无关提示；是否影响可复制状态由当前领域策略决定
+- **THEN** 系统保留 `uncertain` 内部状态，并不得自动显示疾病/用药等无关提示；是否影响 `ready` 由当前领域策略决定
 
 ### Requirement: Preserve and expose the audit snapshot
 
@@ -53,15 +35,3 @@
 #### Scenario: Re-audit edited content
 - **WHEN** 用户修改任意生成字段后保存
 - **THEN** 系统针对保存后的完整草稿重新建立内部声明审计，并使用领域策略重新计算状态和导出门禁
-
-### Requirement: Accept safe paraphrases while preserving source coverage
-
-来源事实校验 SHALL 将可独立识别的事实分句作为覆盖单元，允许自然语言中的语气、助词、顺序和标点变化；校验 MUST 继续要求关键事实单元被表达，并不得因此放宽来源外声明、安全结论或未知结果的审核。
-
-#### Scenario: Accept a natural Chinese paraphrase
-- **WHEN** 来源事实被生成内容用自然中文压缩、改写或重组，但仍表达相同事实和主题重心
-- **THEN** 事实覆盖校验通过，不因为缺少逐字连续匹配而产生用户错误提示
-
-#### Scenario: Keep an unsupported product result blocked
-- **WHEN** 来源只说明用户做了某件事或观察到某个结果，但生成内容声称产品“绝对安全”或“一定有效”
-- **THEN** 声明审核仍标记安全/事实硬失败，不能因为其他事实单元已覆盖而放行

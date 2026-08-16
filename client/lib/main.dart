@@ -14,7 +14,7 @@ final apiClientProvider = Provider<RedBookEditorApiClient>(
 );
 
 const _accountId = '00000000-0000-0000-0000-000000000001';
-const _defaultColumnId = '00000000-0000-0000-0000-000000000002';
+const _defaultColumnId = '669ad3c7-653a-4f62-b6ae-51cd365fbcdd';
 
 final _router = GoRouter(
   routes: [

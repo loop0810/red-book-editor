@@ -1,10 +1,4 @@
-# note-creation Specification
-
-## Purpose
-
-帮助用户用账号定位、明确主题和原始素材生成可编辑、可复制的小红书内容；领域专属信息作为可选上下文，不应改变内容优先的主流程。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Capture a content brief
 

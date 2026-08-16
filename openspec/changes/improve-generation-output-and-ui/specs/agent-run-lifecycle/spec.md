@@ -1,10 +1,4 @@
-# agent-run-lifecycle Specification
-
-## Purpose
-
-为长耗时内容 Agent 提供可持久化、可取消、可恢复且支持断线续读的运行生命周期；运行时诊断服务于服务端、评测和授权调试，不成为普通用户的内容产品界面。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Persist an asynchronous content run
 

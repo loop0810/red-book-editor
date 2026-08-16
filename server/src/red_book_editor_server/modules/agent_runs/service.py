@@ -120,6 +120,8 @@ class AgentRunCoordinator:
     async def _run(self, run_id: UUID) -> None:
         record: AgentRunRecord | None = None
         try:
+            # 数据库状态是生命周期真相，内存 task 只负责调度；因此服务重启后仍能
+            # 根据 queued/running/failed/interrupted 状态查询、取消或恢复运行。
             record = await self._mark_started(run_id)
             if record is None:
                 return
@@ -140,6 +142,8 @@ class AgentRunCoordinator:
                         ).is_cancel_requested(run_id)
 
                 async def event_sink(event: AgentRuntimeEvent) -> None:
+                    # AgentRuntime 的内部事件在这里转成有界、可续读的数据库事件，
+                    # 不把完整 prompt、模型消息或工具原始参数写入持久化层。
                     await self._append_runtime_event(run_id, event)
 
                 if self._settings.model_provider != "deepseek":
@@ -175,6 +179,7 @@ class AgentRunCoordinator:
                     )
 
                 final_draft = result.draft.model_copy(update={"note_id": record.note_id})
+                # 只有统一生成和审核都完成后才保存最终草稿；失败/取消不会把半成品标成可用。
                 await SqlAlchemyNoteRepository(session).save(final_draft)
                 await self._append_phase(run_id, AgentPhase.SAFETY_REVIEW)
                 diagnostics = result.diagnostics or AgentRunDiagnostics(

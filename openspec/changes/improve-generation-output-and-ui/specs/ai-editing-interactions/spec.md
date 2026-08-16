@@ -1,10 +1,4 @@
-# ai-editing-interactions Specification
-
-## Purpose
-
-让用户能够编辑、比较并选择性采纳 AI 对笔记字段的修改，同时保证内容优先的首次创作路径清晰；候选、版本、Diff 和审核证据是可演进的次级能力，不得反过来定义 C 端主页面。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Keep field suggestions separate from the current draft
 

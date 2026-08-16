@@ -36,6 +36,8 @@ _BOUNDARY_FACTS = (
 def build_fact_ledger(source: SourceExperienceDto) -> FactLedgerDto:
     """从用户来源派生只读事实账本；模型输出永远不会写回这里。"""
 
+    # 账本同时保存 confirmed/observed/opinion 和 unknown/forbidden 边界，
+    # 后续审核既要确认“写到了什么”，也要识别“哪些内容不能被补出来”。
     facts: list[SourceFactDto] = [
         SourceFactDto(
             fact_id="source.baby_month",
@@ -125,6 +127,8 @@ def audit_claims(draft: NoteDraftDto, ledger: FactLedgerDto) -> list[ClaimAuditI
         if fact.kind in (FactKind.CONFIRMED, FactKind.OBSERVED, FactKind.OPINION)
     ]
     audited: list[ClaimAuditItemDto] = []
+    # 按字段和句段逐条建立证据，便于 review 层把问题定位回具体文本，
+    # 而不是只返回一个无法解释的整体失败状态。
     for field, text in _draft_text_fields(draft):
         for claim in _claim_segments(text):
             evidence = [fact for fact in source_facts if _contains_fact(fact.text, claim)]
