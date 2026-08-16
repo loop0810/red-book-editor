@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from red_book_editor_server.domain.agent import Tool
+from red_book_editor_server.domain.agent import AgentPhase, Tool
 from red_book_editor_server.domain.contracts import SourceExperienceDto, StyleProfile
 from red_book_editor_server.modules.content_workflow.styling.decorator import _required_facts
 from red_book_editor_server.modules.content_workflow.styling.models import (
@@ -39,6 +39,8 @@ def build_styling_tools() -> list[Tool]:
                 "required": ["form"],
             },
             handler=load_style_profile_tool,
+            phase=AgentPhase.COLLECT_CONTEXT,
+            transition=lambda _: AgentPhase.DRAFT,
         ),
         Tool(
             name="suggest_tags",
@@ -55,6 +57,7 @@ def build_styling_tools() -> list[Tool]:
                 "required": ["topic", "form"],
             },
             handler=suggest_tags_tool,
+            phase=AgentPhase.DRAFT,
         ),
         Tool(
             name="critique_draft",
@@ -78,6 +81,8 @@ def build_styling_tools() -> list[Tool]:
                 "required": ["form", "draft", "source"],
             },
             handler=critique_draft_tool,
+            phase=AgentPhase.CRITIQUE,
+            transition=_critique_transition,
         ),
         Tool(
             name="finalize_note",
@@ -92,8 +97,16 @@ def build_styling_tools() -> list[Tool]:
                 "required": ["form", "draft"],
             },
             handler=finalize_note_tool,
+            phase=AgentPhase.FINALIZE,
         ),
     ]
+
+
+def _critique_transition(result: str) -> AgentPhase:
+    try:
+        return AgentPhase.FINALIZE if bool(json.loads(result).get("passed")) else AgentPhase.REVISE
+    except (AttributeError, json.JSONDecodeError):
+        return AgentPhase.REVISE
 
 
 async def load_style_profile_tool(args: dict[str, object]) -> str:

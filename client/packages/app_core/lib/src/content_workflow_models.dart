@@ -305,12 +305,14 @@ class AgentTraceStep {
     required this.kind,
     required this.label,
     required this.summary,
+    this.phase,
   });
 
   final int order;
   final String kind;
   final String label;
   final String summary;
+  final String? phase;
 
   factory AgentTraceStep.fromJson(Map<String, dynamic> json) {
     // 服务端按 order 返回步骤，编辑器据此展示“读取档案/自评/定稿”等阶段。
@@ -319,6 +321,143 @@ class AgentTraceStep {
       kind: json['kind'] as String? ?? 'phase',
       label: json['label'] as String? ?? '',
       summary: json['summary'] as String? ?? '',
+      phase: json['phase'] as String?,
+    );
+  }
+}
+
+class AgentRunDiagnostics {
+  const AgentRunDiagnostics({
+    required this.status,
+    required this.phase,
+    this.steps = 0,
+    this.revisions = 0,
+    this.toolCalls = 0,
+    this.repeatedErrors = 0,
+    this.failureCode,
+  });
+
+  final String status;
+  final String? phase;
+  final int steps;
+  final int revisions;
+  final int toolCalls;
+  final int repeatedErrors;
+  final String? failureCode;
+
+  factory AgentRunDiagnostics.fromJson(Map<String, dynamic> json) {
+    return AgentRunDiagnostics(
+      status: json['status'] as String? ?? 'failed',
+      phase: json['phase'] as String?,
+      steps: json['steps'] as int? ?? 0,
+      revisions: json['revisions'] as int? ?? 0,
+      toolCalls: json['tool_calls'] as int? ?? 0,
+      repeatedErrors: json['repeated_errors'] as int? ?? 0,
+      failureCode: json['failure_code'] as String?,
+    );
+  }
+}
+
+class AgentRun {
+  const AgentRun({
+    required this.runId,
+    required this.noteId,
+    required this.accountId,
+    required this.columnId,
+    required this.operation,
+    required this.form,
+    required this.status,
+    required this.attempt,
+    required this.cancelRequested,
+    required this.createdAt,
+    required this.updatedAt,
+    this.currentPhase,
+    this.diagnostics,
+    this.failureCode,
+    this.startedAt,
+    this.finishedAt,
+  });
+
+  final String runId;
+  final String noteId;
+  final String accountId;
+  final String columnId;
+  final String operation;
+  final StyleForm form;
+  final String status;
+  final String? currentPhase;
+  final int attempt;
+  final bool cancelRequested;
+  final AgentRunDiagnostics? diagnostics;
+  final String? failureCode;
+  final String createdAt;
+  final String updatedAt;
+  final String? startedAt;
+  final String? finishedAt;
+
+  factory AgentRun.fromJson(Map<String, dynamic> json) {
+    return AgentRun(
+      runId: json['run_id'] as String,
+      noteId: json['note_id'] as String,
+      accountId: json['account_id'] as String,
+      columnId: json['column_id'] as String,
+      operation: json['operation'] as String? ?? 'generate',
+      form: styleFormFromApi(json['form'] as String? ?? 'experience'),
+      status: json['status'] as String? ?? 'failed',
+      currentPhase: json['current_phase'] as String?,
+      attempt: json['attempt'] as int? ?? 1,
+      cancelRequested: json['cancel_requested'] as bool? ?? false,
+      diagnostics: json['diagnostics'] is Map<String, dynamic>
+          ? AgentRunDiagnostics.fromJson(
+              json['diagnostics'] as Map<String, dynamic>,
+            )
+          : null,
+      failureCode: json['failure_code'] as String?,
+      createdAt: json['created_at'] as String? ?? '',
+      updatedAt: json['updated_at'] as String? ?? '',
+      startedAt: json['started_at'] as String?,
+      finishedAt: json['finished_at'] as String?,
+    );
+  }
+}
+
+class AgentRunEvent {
+  const AgentRunEvent({
+    required this.runId,
+    required this.sequence,
+    required this.eventType,
+    required this.label,
+    required this.summary,
+    required this.attempt,
+    this.phase,
+    this.status,
+    this.failureCode,
+    this.createdAt,
+  });
+
+  final String runId;
+  final int sequence;
+  final String eventType;
+  final String? phase;
+  final String label;
+  final String summary;
+  final String? status;
+  final String? failureCode;
+  final int attempt;
+  final String? createdAt;
+
+  factory AgentRunEvent.fromJson(Map<String, dynamic> json) {
+    return AgentRunEvent(
+      runId: json['run_id'] as String,
+      sequence: json['sequence'] as int,
+      eventType: json['event_type'] as String? ?? 'phase',
+      phase: json['phase'] as String?,
+      label: json['label'] as String? ?? '',
+      summary: json['summary'] as String? ?? '',
+      status: json['status'] as String?,
+      failureCode: json['failure_code'] as String?,
+      attempt: json['attempt'] as int? ?? 1,
+      createdAt: json['created_at'] as String?,
     );
   }
 }

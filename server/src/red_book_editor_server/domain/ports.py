@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -11,7 +11,15 @@ from red_book_editor_server.domain.contracts import (
     ContentColumnDto,
     NoteDraftDto,
     SourceExperienceDto,
+    StyleForm,
 )
+
+if TYPE_CHECKING:
+    from red_book_editor_server.domain.agent_runs import (
+        AgentRunEventRecord,
+        AgentRunLifecycleStatus,
+        AgentRunRecord,
+    )
 
 
 class ContentGenerator(Protocol):
@@ -32,6 +40,53 @@ class NoteRepository(Protocol):
     async def create(self, draft: NoteDraftDto) -> NoteDraftDto: ...
 
     async def save(self, draft: NoteDraftDto) -> NoteDraftDto: ...
+
+
+class AgentRunRepository(Protocol):
+    async def create(
+        self,
+        *,
+        note_id: UUID,
+        account_id: UUID,
+        column_id: UUID,
+        form: StyleForm,
+    ) -> AgentRunRecord: ...
+
+    async def get(self, run_id: UUID) -> AgentRunRecord | None: ...
+
+    async def mark_running(self, run_id: UUID) -> AgentRunRecord: ...
+
+    async def mark_interrupted(self) -> list[AgentRunRecord]: ...
+
+    async def request_cancel(self, run_id: UUID) -> AgentRunRecord | None: ...
+
+    async def prepare_resume(self, run_id: UUID) -> AgentRunRecord: ...
+
+    async def update_state(
+        self,
+        run_id: UUID,
+        *,
+        status: AgentRunLifecycleStatus,
+        current_phase: str | None = None,
+        diagnostics: object | None = None,
+        failure_code: str | None = None,
+    ) -> AgentRunRecord: ...
+
+    async def is_cancel_requested(self, run_id: UUID) -> bool: ...
+
+    async def append_event(
+        self,
+        run_id: UUID,
+        event: AgentRunEventRecord,
+    ) -> AgentRunEventRecord: ...
+
+    async def list_events(
+        self,
+        run_id: UUID,
+        *,
+        after: int = 0,
+        limit: int = 100,
+    ) -> list[AgentRunEventRecord]: ...
 
 
 class AccountColumnContextPort(Protocol):

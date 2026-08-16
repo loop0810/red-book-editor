@@ -64,6 +64,7 @@ async def test_generate_service_returns_reviewed_draft_with_style_form() -> None
     assert result.draft.style_form is StyleForm.EXPERIENCE
     assert result.draft.account_id == account_id
     assert result.agent_trace[0].label == "stub_fallback"
+    assert result.agent_trace[-1].label == "safety_review"
 
 
 def test_generate_note_requires_form(client: TestClient) -> None:
@@ -101,6 +102,7 @@ def test_restyle_note_returns_draft_and_trace(client: TestClient) -> None:
     payload = response.json()
     assert payload["draft"]["note_id"] == draft["note_id"]
     assert payload["agent_trace"][0]["label"] == "stub_fallback"
+    assert payload["agent_trace"][-1]["phase"] == "safety_review"
     assert payload["draft"]["review"] is not None
 
 

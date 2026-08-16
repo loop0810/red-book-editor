@@ -46,6 +46,149 @@ class RedBookEditorApiClient {
     );
   }
 
+  Future<AgentRun> createAgentRun({
+    required String accountId,
+    required String columnId,
+    required SourceExperience source,
+    required StyleForm form,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/v1/agent-runs'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({
+        'account_id': accountId,
+        'column_id': columnId,
+        'form': styleFormToApi(form),
+        'source': source.toJson(),
+      }),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return AgentRun.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<AgentRun> getAgentRun({required String runId}) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/api/v1/agent-runs/$runId'),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return AgentRun.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<AgentRun> cancelAgentRun({required String runId}) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/v1/agent-runs/$runId/cancel'),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return AgentRun.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<AgentRun> resumeAgentRun({required String runId}) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/v1/agent-runs/$runId/resume'),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return AgentRun.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<NoteDraft> getNote({required String noteId}) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/api/v1/notes/$noteId'),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return NoteDraft.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Stream<AgentRunEvent> watchAgentRunEvents({
+    required String runId,
+    int after = 0,
+  }) async* {
+    final uri = Uri.parse(
+      '$baseUrl/api/v1/agent-runs/$runId/events',
+    ).replace(queryParameters: {'after': '$after'});
+    final response = await _client.send(http.Request('GET', uri));
+    if (response.statusCode >= 400) {
+      final error = await http.Response.fromStream(response);
+      throw ApiRequestException(error.statusCode, error.body);
+    }
+    var buffer = '';
+    await for (final chunk in utf8.decoder.bind(response.stream)) {
+      buffer += chunk;
+      var separator = buffer.indexOf('\n\n');
+      while (separator >= 0) {
+        final event = _agentRunEventFromSse(buffer.substring(0, separator));
+        if (event != null) yield event;
+        buffer = buffer.substring(separator + 2);
+        separator = buffer.indexOf('\n\n');
+      }
+    }
+    if (buffer.trim().isNotEmpty) {
+      final event = _agentRunEventFromSse(buffer);
+      if (event != null) yield event;
+    }
+  }
+
+  Future<StyledNoteResponse> generateNoteWithProgress({
+    required String accountId,
+    required String columnId,
+    required SourceExperience source,
+    required StyleForm form,
+    void Function(AgentRunEvent event)? onEvent,
+    void Function(AgentRun run)? onRunCreated,
+  }) async {
+    final run = await createAgentRun(
+      accountId: accountId,
+      columnId: columnId,
+      source: source,
+      form: form,
+    );
+    onRunCreated?.call(run);
+    final trace = <AgentTraceStep>[];
+    await for (final event in watchAgentRunEvents(runId: run.runId)) {
+      onEvent?.call(event);
+      if (event.eventType == 'phase' ||
+          event.eventType == 'model' ||
+          event.eventType == 'tool') {
+        trace.add(
+          AgentTraceStep(
+            order: event.sequence,
+            kind: event.eventType == 'model' || event.eventType == 'tool'
+                ? event.eventType
+                : 'phase',
+            label: event.label,
+            summary: event.summary,
+            phase: event.phase,
+          ),
+        );
+      }
+    }
+    final finished = await getAgentRun(runId: run.runId);
+    if (finished.status != 'completed') {
+      throw ApiRequestException(
+        409,
+        jsonEncode({
+          'status': finished.status,
+          'failure_code': finished.failureCode,
+        }),
+      );
+    }
+    return StyledNoteResponse(
+      draft: await getNote(noteId: finished.noteId),
+      agentTrace: trace,
+    );
+  }
+
   Future<StyledNoteResponse> restyleNote({
     required NoteDraft draft,
     required StyleForm form,
@@ -282,4 +425,14 @@ class ApiRequestException implements Exception {
 
   final int statusCode;
   final String body;
+}
+
+AgentRunEvent? _agentRunEventFromSse(String block) {
+  final data = block
+      .split('\n')
+      .where((line) => line.startsWith('data:'))
+      .map((line) => line.substring(5).trim())
+      .join();
+  if (data.isEmpty) return null;
+  return AgentRunEvent.fromJson(jsonDecode(data) as Map<String, dynamic>);
 }

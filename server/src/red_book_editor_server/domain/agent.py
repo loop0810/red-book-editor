@@ -1,13 +1,57 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import Awaitable, Callable
+import time
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from enum import StrEnum
+from typing import Any, Literal, NoReturn, TypeVar
 
 from pydantic import BaseModel
 
 from red_book_editor_server.domain.ports import ModelGateway, ToolCall
+
+T = TypeVar("T")
+
+
+class AgentPhase(StrEnum):
+    COLLECT_CONTEXT = "collect_context"
+    DRAFT = "draft"
+    CRITIQUE = "critique"
+    REVISE = "revise"
+    SAFETY_REVIEW = "safety_review"
+    FINALIZE = "finalize"
+
+
+class AgentRunStatus(StrEnum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    CANCELLED = "cancelled"
+
+
+class AgentFailureCode(StrEnum):
+    MAX_STEPS = "agent_max_steps"
+    FINALIZATION_FAILED = "agent_finalization_failed"
+    REVISION_BUDGET_EXHAUSTED = "agent_revision_budget_exhausted"
+    TOOL_BUDGET_EXHAUSTED = "agent_tool_budget_exhausted"
+    REPEATED_ERROR = "agent_repeated_error"
+    STAGE_TIMEOUT = "agent_stage_timeout"
+    MODEL_ERROR = "agent_model_error"
+    INPUT_ERROR = "agent_input_error"
+    UNEXPECTED_ERROR = "agent_unexpected_error"
+    CANCELLED = "agent_cancelled"
+
+
+class AgentRunDiagnostics(BaseModel):
+    status: AgentRunStatus
+    phase: AgentPhase
+    steps: int = 0
+    revisions: int = 0
+    tool_calls: int = 0
+    repeated_errors: int = 0
+    failure_code: AgentFailureCode | None = None
 
 
 class AgentTraceStep(BaseModel):
@@ -17,6 +61,19 @@ class AgentTraceStep(BaseModel):
     kind: Literal["model", "tool", "phase"]
     label: str
     summary: str
+    phase: AgentPhase | None = None
+
+
+class AgentRuntimeEvent(BaseModel):
+    """Runtime 发给应用层的有界事件，不包含完整模型消息。"""
+
+    order: int
+    kind: Literal["model", "tool", "phase", "terminal"]
+    label: str
+    summary: str
+    phase: AgentPhase | None = None
+    status: AgentRunStatus | None = None
+    failure_code: AgentFailureCode | None = None
 
 
 class FinalValidation(BaseModel):
@@ -35,28 +92,41 @@ class Tool:
     description: str
     parameters: dict[str, Any]
     handler: Callable[[dict[str, Any]], Awaitable[str]]
+    phase: AgentPhase = AgentPhase.DRAFT
+    transition: Callable[[str], AgentPhase | None] | None = None
 
 
 class AgentRunResult(BaseModel):
-    """agent 运行结果：校验通过的结构化输出 + 完整 trace。"""
+    """agent 运行结果：校验通过的结构化输出、trace 和运行诊断。"""
 
     result: Any
     trace: list[AgentTraceStep]
+    diagnostics: AgentRunDiagnostics
 
 
 class AgentRunError(RuntimeError):
-    """agent 未能产出通过校验的结果（达到最大步数或重试耗尽）。"""
+    """agent 未能产出通过校验的结果，并保留失败诊断和部分 trace。"""
 
-    def __init__(self, message: str, trace: list[AgentTraceStep]) -> None:
+    def __init__(
+        self,
+        message: str,
+        trace: list[AgentTraceStep],
+        *,
+        diagnostics: AgentRunDiagnostics | None = None,
+        partial_result: Any | None = None,
+    ) -> None:
         super().__init__(message)
         self.trace = trace
+        self.diagnostics = diagnostics or AgentRunDiagnostics(
+            status=AgentRunStatus.FAILED,
+            phase=AgentPhase.COLLECT_CONTEXT,
+            failure_code=_failure_code_from_message(message),
+        )
+        self.partial_result = partial_result
 
 
 class AgentRuntime:
-    """手写的最小 agent 循环：模型决策 → 工具执行 → 结果回填 → 再决策。
-
-    固定骨架由调用方通过系统提示与最终校验器约束；本类只负责调度与 trace。
-    """
+    """手写的有限状态 agent 循环：模型决策 → 工具执行 → 结果回填 → 再决策。"""
 
     def __init__(
         self,
@@ -65,11 +135,31 @@ class AgentRuntime:
         max_steps: int = 12,
         retry_final: int = 2,
         summary_limit: int = 400,
+        max_revisions: int | None = None,
+        max_tool_calls: int = 24,
+        max_same_error: int = 0,
+        stage_timeout_seconds: float | None = None,
+        phase_timeouts: Mapping[AgentPhase, float] | None = None,
     ) -> None:
         self._gateway = gateway
-        self._max_steps = max(1, max_steps)
-        self._retry_final = max(0, retry_final)
+        self._max_steps = _positive_int(max_steps, "max_steps")
+        self._retry_final = _nonnegative_int(retry_final, "retry_final")
         self._summary_limit = max(20, summary_limit)
+        self._revision_budget_explicit = max_revisions is not None
+        self._max_revisions = (
+            self._retry_final
+            if max_revisions is None
+            else _nonnegative_int(max_revisions, "max_revisions")
+        )
+        self._max_tool_calls = _nonnegative_int(max_tool_calls, "max_tool_calls")
+        self._max_same_error = _nonnegative_int(max_same_error, "max_same_error")
+        if stage_timeout_seconds is not None and stage_timeout_seconds <= 0:
+            raise ValueError("stage_timeout_seconds must be positive")
+        self._stage_timeout_seconds = stage_timeout_seconds
+        self._phase_timeouts = dict(phase_timeouts or {})
+        for phase, timeout in self._phase_timeouts.items():
+            if timeout <= 0:
+                raise ValueError(f"phase timeout for {phase} must be positive")
 
     async def run(
         self,
@@ -78,6 +168,8 @@ class AgentRuntime:
         user: str,
         tools: list[Tool],
         final_validator: Callable[[str], FinalValidation],
+        cancel_check: Callable[[], Awaitable[bool]] | None = None,
+        event_sink: Callable[[AgentRuntimeEvent], Awaitable[None]] | None = None,
     ) -> AgentRunResult:
         # messages 是 Agent 的“短期记忆”：每次模型调用都会看到完整历史，
         # 包括用户事实、模型上一次的工具请求，以及工具返回的结果。
@@ -92,14 +184,101 @@ class AgentRuntime:
         tool_schemas = [self._tool_schema(tool) for tool in tools]
         tool_map = {tool.name: tool for tool in tools}
         order = 0
-        final_attempts = 0
+        event_order = 0
+        steps = 0
+        revisions = 0
+        tool_calls = 0
+        repeated_errors = 0
+        last_error: str | None = None
+        current_phase = AgentPhase.COLLECT_CONTEXT
+        phase_started = time.monotonic()
+        partial_result: Any | None = None
 
+        def diagnostics(
+            status: AgentRunStatus,
+            failure_code: AgentFailureCode | None = None,
+        ) -> AgentRunDiagnostics:
+            return AgentRunDiagnostics(
+                status=status,
+                phase=current_phase,
+                steps=steps,
+                revisions=revisions,
+                tool_calls=tool_calls,
+                repeated_errors=repeated_errors,
+                failure_code=failure_code,
+            )
+
+        def fail(code: AgentFailureCode, status: AgentRunStatus) -> NoReturn:
+            raise AgentRunError(
+                code.value,
+                trace,
+                diagnostics=diagnostics(status, code),
+                partial_result=partial_result,
+            )
+
+        def set_phase(next_phase: AgentPhase) -> None:
+            nonlocal current_phase, phase_started
+            if current_phase != next_phase:
+                current_phase = next_phase
+                phase_started = time.monotonic()
+
+        async def emit(
+            kind: Literal["model", "tool", "phase", "terminal"],
+            label: str,
+            summary: str,
+            *,
+            status: AgentRunStatus | None = None,
+            failure_code: AgentFailureCode | None = None,
+        ) -> None:
+            nonlocal event_order
+            if event_sink is None:
+                return
+            event_order += 1
+            await event_sink(
+                AgentRuntimeEvent(
+                    order=event_order,
+                    kind=kind,
+                    label=label,
+                    summary=self._summarize(summary),
+                    phase=current_phase,
+                    status=status,
+                    failure_code=failure_code,
+                )
+            )
+
+        async def check_cancelled() -> None:
+            if cancel_check is not None and await cancel_check():
+                fail(AgentFailureCode.CANCELLED, AgentRunStatus.CANCELLED)
+
+        def record_error(error: str) -> None:
+            nonlocal last_error, repeated_errors
+            normalized = _normalize_error(error, self._summary_limit)
+            if normalized == last_error:
+                repeated_errors += 1
+            else:
+                last_error = normalized
+                repeated_errors = 1
+
+        async def invoke(factory: Callable[[], Awaitable[T]]) -> T:
+            await check_cancelled()
+            timeout = self._phase_timeouts.get(current_phase, self._stage_timeout_seconds)
+            if timeout is None:
+                return await factory()
+            remaining = timeout - (time.monotonic() - phase_started)
+            if remaining <= 0:
+                fail(AgentFailureCode.STAGE_TIMEOUT, AgentRunStatus.BUDGET_EXHAUSTED)
+            try:
+                return await asyncio.wait_for(factory(), timeout=remaining)
+            except asyncio.TimeoutError:
+                fail(AgentFailureCode.STAGE_TIMEOUT, AgentRunStatus.BUDGET_EXHAUSTED)
+
+        await emit("phase", current_phase.value, f"进入阶段：{current_phase.value}")
         for _ in range(self._max_steps):
+            steps += 1
+            await check_cancelled()
             # 一轮循环只有两种结果：模型要求工具，或模型尝试提交最终答案。
-            # max_steps 是保险丝，防止模型一直调用工具或反复修订。
-            # 一轮 loop = 给模型当前上下文 -> 等模型决定下一步。
-            # 模型可能要求工具, 也可能认为已经完成并直接返回最终 JSON。
-            response = await self._gateway.chat(messages, tools=tool_schemas)
+            # max_steps 是保险丝，独立预算负责防止特定类型的循环。
+            response = await invoke(lambda: self._gateway.chat(messages, tools=tool_schemas))
             order += 1
             trace.append(
                 AgentTraceStep(
@@ -107,14 +286,17 @@ class AgentRuntime:
                     kind="model",
                     label="model",
                     summary=self._summarize(response.content or ""),
+                    phase=current_phase,
                 )
+            )
+            await emit(
+                "model",
+                "model",
+                "模型调用完成",
             )
 
             if response.tool_calls:
-                # 工具调用先在本地执行，结果再以 role=tool 回填给模型，
-                # 下一轮模型才能根据工具结果继续决策。
-                # 先把 assistant 的工具请求写回历史。下一次模型调用时,
-                # 模型才知道自己刚才要求了什么工具。
+                # 工具调用先在本地执行，结果再以 role=tool 回填给模型。
                 messages.append(
                     {
                         "role": "assistant",
@@ -126,9 +308,16 @@ class AgentRuntime:
                 )
                 for call in response.tool_calls:
                     order += 1
-                    # 工具在本地执行, 不再经过模型。执行结果随后以 role=tool
-                    # 回填 messages，形成“决策 -> 执行 -> 结果回填”的闭环。
-                    result_text = await self._execute_tool(tool_map, call)
+                    if tool_calls >= self._max_tool_calls:
+                        fail(
+                            AgentFailureCode.TOOL_BUDGET_EXHAUSTED, AgentRunStatus.BUDGET_EXHAUSTED
+                        )
+                    tool_calls += 1
+                    tool = tool_map.get(call.name)
+                    if tool is not None:
+                        set_phase(tool.phase)
+                        await emit("phase", current_phase.value, f"进入阶段：{current_phase.value}")
+                    result_text = await invoke(lambda: self._execute_tool(tool_map, call))
                     messages.append(
                         {
                             "role": "tool",
@@ -144,19 +333,61 @@ class AgentRuntime:
                             summary=self._summarize(
                                 f"args={self._summarize(call.arguments, 160)} -> {result_text}"
                             ),
+                            phase=current_phase,
                         )
                     )
+                    await emit(
+                        "tool",
+                        call.name,
+                        "工具调用失败" if result_text.startswith("error:") else "工具调用完成",
+                    )
+                    if result_text.startswith("error:"):
+                        record_error(result_text)
+                        if self._max_same_error and repeated_errors >= self._max_same_error:
+                            fail(AgentFailureCode.REPEATED_ERROR, AgentRunStatus.BUDGET_EXHAUSTED)
+                    else:
+                        last_error = None
+                        repeated_errors = 0
+                    if tool is not None and tool.transition is not None:
+                        next_phase = tool.transition(result_text)
+                        if next_phase is not None:
+                            set_phase(next_phase)
+                            await emit(
+                                "phase", current_phase.value, f"进入阶段：{current_phase.value}"
+                            )
                 continue
 
-            # 没有工具调用，说明模型尝试结束本轮。这里不能直接相信文本，
-            # 必须交给业务方提供的 validator 做 JSON、字段和事实校验。
+            # 没有工具调用，说明模型尝试结束本轮；最终结果必须经过 validator。
+            await check_cancelled()
+            set_phase(AgentPhase.FINALIZE)
+            await emit("phase", current_phase.value, f"进入阶段：{current_phase.value}")
             validation = final_validator(response.content or "")
             if validation.ok:
-                return AgentRunResult(result=validation.result, trace=trace)
-            final_attempts += 1
-            if final_attempts > self._retry_final:
-                raise AgentRunError("agent_finalization_failed", trace=trace)
-            # 校验失败也继续 loop, 但只增加一条修正提示; 不重复执行已经完成的工具。
+                await emit(
+                    "terminal",
+                    AgentRunStatus.COMPLETED.value,
+                    "Agent 运行完成",
+                    status=AgentRunStatus.COMPLETED,
+                )
+                return AgentRunResult(
+                    result=validation.result,
+                    trace=trace,
+                    diagnostics=diagnostics(AgentRunStatus.COMPLETED),
+                )
+            partial_result = validation.result or partial_result
+            revisions += 1
+            record_error(validation.error)
+            set_phase(AgentPhase.REVISE)
+            if self._max_same_error and repeated_errors >= self._max_same_error:
+                fail(AgentFailureCode.REPEATED_ERROR, AgentRunStatus.BUDGET_EXHAUSTED)
+            if revisions > self._max_revisions:
+                if self._revision_budget_explicit:
+                    fail(
+                        AgentFailureCode.REVISION_BUDGET_EXHAUSTED,
+                        AgentRunStatus.BUDGET_EXHAUSTED,
+                    )
+                fail(AgentFailureCode.FINALIZATION_FAILED, AgentRunStatus.FAILED)
+            # 校验失败也继续 loop, 但只增加一条修正提示，不重复执行已完成工具。
             messages.append(
                 {
                     "role": "user",
@@ -167,12 +398,11 @@ class AgentRuntime:
                 }
             )
 
-        # max_steps 是保险丝: 防止模型一直调用工具或一直无法产出合法结果。
-        raise AgentRunError("agent_max_steps", trace=trace)
+        # max_steps 是保险丝：防止模型一直调用工具或一直无法产出合法结果。
+        fail(AgentFailureCode.MAX_STEPS, AgentRunStatus.BUDGET_EXHAUSTED)
 
     async def _execute_tool(self, tool_map: dict[str, Tool], call: ToolCall) -> str:
-        # 模型只能提交工具名和 JSON 参数；这里负责把请求路由到白名单 handler，
-        # 并把参数错误/handler 异常转换成模型可以理解的文本结果。
+        # 模型只能提交工具名和 JSON 参数；这里负责把请求路由到白名单 handler。
         tool = tool_map.get(call.name)
         if tool is None:
             return f'error: unknown tool "{call.name}"'
@@ -189,7 +419,6 @@ class AgentRuntime:
 
     @staticmethod
     def _tool_schema(tool: Tool) -> dict[str, object]:
-        # schema 发给模型用于“决定要不要调用”，handler 不会随 schema 暴露给模型。
         return {
             "type": "function",
             "function": {
@@ -212,4 +441,28 @@ class AgentRuntime:
         compact = " ".join(text.split())
         if len(compact) <= (limit or self._summary_limit):
             return compact
-        return f"{compact[: limit or self._summary_limit]}…"
+        max_length = limit or self._summary_limit
+        return f"{compact[: max_length - 1]}…"
+
+
+def _positive_int(value: int, name: str) -> int:
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1")
+    return value
+
+
+def _nonnegative_int(value: int, name: str) -> int:
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return value
+
+
+def _normalize_error(value: str, limit: int) -> str:
+    return " ".join(value.split())[:limit]
+
+
+def _failure_code_from_message(message: str) -> AgentFailureCode | None:
+    try:
+        return AgentFailureCode(message)
+    except ValueError:
+        return None

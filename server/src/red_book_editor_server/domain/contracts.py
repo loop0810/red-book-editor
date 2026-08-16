@@ -161,6 +161,7 @@ class AgentTraceStepDto(BaseModel):
     kind: str
     label: str
     summary: str
+    phase: str | None = None
 
 
 class StyledNoteResponseDto(BaseModel):

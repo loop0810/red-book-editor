@@ -57,6 +57,68 @@ RedBookEditorApiClient _client(
 
 void main() {
   group('account isolation', () {
+    test('generateNoteWithProgress consumes AgentRun SSE events', () async {
+      final paths = <String>[];
+      final runJson = {
+        'run_id': 'run-1',
+        'note_id': _draftJson['note_id'],
+        'account_id': _accountId,
+        'column_id': _columnId,
+        'operation': 'generate',
+        'form': 'experience',
+        'status': 'queued',
+        'current_phase': null,
+        'attempt': 1,
+        'cancel_requested': false,
+        'created_at': '2026-08-16T00:00:00Z',
+        'updated_at': '2026-08-16T00:00:00Z',
+      };
+      final client = _client((request) async {
+        paths.add(request.url.path);
+        if (request.method == 'POST' &&
+            request.url.path == '/api/v1/agent-runs') {
+          return http.Response(jsonEncode(runJson), 202);
+        }
+        if (request.url.path.endsWith('/events')) {
+          return http.Response.bytes(
+            utf8.encode(
+              'id: 1\nevent: phase\ndata: ${jsonEncode({'run_id': 'run-1', 'sequence': 1, 'event_type': 'phase', 'phase': 'draft', 'label': 'draft', 'summary': '进入阶段：draft', 'attempt': 1})}\n\n'
+              'id: 2\nevent: run.completed\ndata: ${jsonEncode({'run_id': 'run-1', 'sequence': 2, 'event_type': 'run.completed', 'phase': 'safety_review', 'label': 'completed', 'summary': '完成', 'status': 'completed', 'attempt': 1})}\n\n',
+            ),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        }
+        if (request.url.path.endsWith('/agent-runs/run-1')) {
+          return http.Response(
+            jsonEncode({...runJson, 'status': 'completed'}),
+            200,
+          );
+        }
+        return http.Response.bytes(utf8.encode(jsonEncode(_draftJson)), 200);
+      });
+      final events = <AgentRunEvent>[];
+      final result = await client.generateNoteWithProgress(
+        accountId: _accountId,
+        columnId: _columnId,
+        source: const SourceExperience(
+          babyMonth: 19,
+          scenario: '睡前哭闹',
+          actions: ['固定绘本时间'],
+        ),
+        form: StyleForm.experience,
+        onEvent: events.add,
+      );
+      expect(events.first.label, 'draft');
+      expect(result.draft.noteId, _draftJson['note_id']);
+      expect(paths, [
+        '/api/v1/agent-runs',
+        '/api/v1/agent-runs/run-1/events',
+        '/api/v1/agent-runs/run-1',
+        '/api/v1/notes/${_draftJson['note_id']}',
+      ]);
+    });
+
     test('generateNote sends account and column ids', () async {
       final requests = <http.Request>[];
       final client = _client((request) async {

@@ -16,6 +16,15 @@ REQUIRED_CASE_FIELDS = {
 }
 REQUIRED_SOURCE_FIELDS = {"baby_month", "scenario", "actions", "observations", "notes"}
 SENSITIVE_KEYS = {"api_key", "authorization", "access_token", "secret", "token"}
+REQUIRED_DIAGNOSTIC_FIELDS = {
+    "status",
+    "phase",
+    "steps",
+    "revisions",
+    "tool_calls",
+    "repeated_errors",
+    "failure_code",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,6 +85,9 @@ def validate_run(run: Any, case_ids: set[str]) -> None:
     if not isinstance(records, list):
         raise ValueError("run.records must be an array")
     seen: set[tuple[str, int]] = set()
+    schema_version = run["schema_version"]
+    if not isinstance(schema_version, int) or schema_version < 1:
+        raise ValueError("run.schema_version must be a positive integer")
     for record in records:
         if not isinstance(record, dict):
             raise ValueError("each run record must be an object")
@@ -87,6 +99,16 @@ def validate_run(run: Any, case_ids: set[str]) -> None:
         if identity in seen:
             raise ValueError(f"duplicate run record: {identity}")
         seen.add(identity)
+        if schema_version >= 3:
+            diagnostics = record.get("agent_diagnostics")
+            if not isinstance(diagnostics, dict):
+                raise ValueError(f"{identity}: agent_diagnostics must be an object")
+            missing = REQUIRED_DIAGNOSTIC_FIELDS - diagnostics.keys()
+            if missing:
+                raise ValueError(f"{identity}: diagnostics missing fields: {sorted(missing)}")
+            for field in ("steps", "revisions", "tool_calls", "repeated_errors"):
+                if not isinstance(diagnostics[field], int) or diagnostics[field] < 0:
+                    raise ValueError(f"{identity}: diagnostics.{field} must be non-negative")
     validate_no_sensitive_keys(run)
 
 

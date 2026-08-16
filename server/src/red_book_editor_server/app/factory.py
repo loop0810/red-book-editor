@@ -15,6 +15,7 @@ from red_book_editor_server.app.database import (
 from red_book_editor_server.app.logging import configure_logging
 from red_book_editor_server.app.middleware import RequestIdMiddleware
 from red_book_editor_server.modules.accounts.router import router as accounts_router
+from red_book_editor_server.modules.agent_runs.service import AgentRunCoordinator
 from red_book_editor_server.modules.content_workflow.router import router as content_workflow_router
 from red_book_editor_server.modules.content_workflow.styling.profiles import load_all_profiles
 from red_book_editor_server.modules.notes.router import router as notes_router
@@ -28,6 +29,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.engine = engine
     application.state.session_factory = create_session_factory(engine)
     application.state.database_session_provider = get_database_session
+    coordinator = AgentRunCoordinator(application.state.session_factory, settings)
+    application.state.agent_run_coordinator = coordinator
+    await coordinator.recover_orphans()
     settings.storage_root.mkdir(parents=True, exist_ok=True)
     load_all_profiles()
     yield
@@ -39,6 +43,9 @@ def create_app() -> FastAPI:
     application = FastAPI(title="Red Book Editor Server", lifespan=lifespan)
     application.add_middleware(RequestIdMiddleware)
     application.include_router(content_workflow_router)
+    from red_book_editor_server.modules.agent_runs.router import router as agent_runs_router
+
+    application.include_router(agent_runs_router)
     application.include_router(accounts_router)
     application.include_router(notes_router)
 

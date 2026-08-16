@@ -8,6 +8,7 @@
 - `scorecard.md`：人工评分规则和硬失败条件。
 - `runs/`：runner 产生的单次或多次模型运行记录。
 - 每条 run record 包含 `automatic_hard_failures` 初筛标签；它只用于回归筛查，不替代人工评分。
+- 新生成的 run 使用 schema version 3，并包含 `agent_diagnostics`：阶段、步骤、修订、工具调用、重复错误和稳定失败代码；历史 schema 1/2 记录保持可读。
 - `scores/`：与 run 一一对应的人工评分、硬失败和人工修订稿。
 - `baseline-report.md`：人工完成评分后的汇总报告。
 

@@ -115,6 +115,20 @@ class WorkbenchHomePage extends ConsumerWidget {
                             source: source,
                             form: form,
                           ),
+                      generateWithProgress:
+                          (source, form, {onEvent, onRunCreated}) => ref
+                              .read(apiClientProvider)
+                              .generateNoteWithProgress(
+                                accountId: _accountId,
+                                columnId: _defaultColumnId,
+                                source: source,
+                                form: form,
+                                onEvent: onEvent,
+                                onRunCreated: onRunCreated,
+                              ),
+                      cancelAgentRun: (runId) => ref
+                          .read(apiClientProvider)
+                          .cancelAgentRun(runId: runId),
                       uploadAsset: (filePath) => ref
                           .read(apiClientProvider)
                           .uploadAsset(

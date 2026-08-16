@@ -35,11 +35,13 @@ void main() {
           'kind': 'tool',
           'label': 'critique_draft',
           'summary': 'scores ok',
+          'phase': 'critique',
         },
       ],
     });
     expect(response.draft.noteId, '11111111-1111-1111-1111-111111111111');
     expect(response.agentTrace.single.label, 'critique_draft');
     expect(response.agentTrace.single.order, 1);
+    expect(response.agentTrace.single.phase, 'critique');
   });
 }

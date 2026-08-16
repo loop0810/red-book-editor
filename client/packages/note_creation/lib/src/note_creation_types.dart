@@ -7,6 +7,14 @@ typedef GenerateNote =
       SourceExperience source,
       StyleForm form,
     );
+typedef GenerateNoteWithProgress =
+    Future<StyledNoteResponse> Function(
+      SourceExperience source,
+      StyleForm form, {
+      void Function(AgentRunEvent event)? onEvent,
+      void Function(AgentRun run)? onRunCreated,
+    });
+typedef CancelAgentRun = Future<AgentRun> Function(String runId);
 typedef UploadAsset = Future<String> Function(String filePath);
 
 // field 是 title/body/hashtags/cover_copy 之一，服务端据此执行局部更新。

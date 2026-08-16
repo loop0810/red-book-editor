@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, cast
@@ -8,7 +9,17 @@ from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
 
-from red_book_editor_server.domain.agent import AgentRunError, AgentTraceStep
+from red_book_editor_server.domain.agent import (
+    AgentFailureCode,
+    AgentPhase,
+    AgentRunDiagnostics,
+    AgentRunError,
+    AgentRunStatus,
+    AgentRuntime,
+    AgentRuntimeEvent,
+    AgentTraceStep,
+    FinalValidation,
+)
 from red_book_editor_server.domain.contracts import (
     AccountProfileDto,
     AgentTraceStepDto,
@@ -61,6 +72,7 @@ class StyleFormRequiredError(RuntimeError):
 class WorkflowResult:
     draft: NoteDraftDto
     agent_trace: list[AgentTraceStepDto]
+    diagnostics: AgentRunDiagnostics | None = None
 
     def as_response(self) -> StyledNoteResponseDto:
         return StyledNoteResponseDto(draft=self.draft, agent_trace=self.agent_trace)
@@ -92,15 +104,29 @@ class ContentWorkflowService:
         column_id: UUID,
         source: SourceExperienceDto,
         form: StyleForm,
+        cancel_check: Callable[[], Awaitable[bool]] | None = None,
+        event_sink: Callable[[AgentRuntimeEvent], Awaitable[None]] | None = None,
     ) -> WorkflowResult:
+        if cancel_check is not None and await cancel_check():
+            raise AgentRunError(
+                "agent_cancelled",
+                [],
+                diagnostics=AgentRunDiagnostics(
+                    status=AgentRunStatus.CANCELLED,
+                    phase=AgentPhase.COLLECT_CONTEXT,
+                    failure_code=AgentFailureCode.CANCELLED,
+                ),
+            )
         account, column = await self._load_context(account_id, column_id)
         if self._model_provider == "deepseek":
-            finalized, trace = await self._style(
+            finalized, trace, diagnostics = await self._style(
                 source=source,
                 neutral_draft=None,
                 form=form,
                 account_context=_account_context(account),
                 column_context=column.description if column else "",
+                cancel_check=cancel_check,
+                event_sink=event_sink,
             )
             draft = finalize_to_note_draft(
                 finalized,
@@ -117,11 +143,26 @@ class ContentWorkflowService:
             )
             draft = draft.model_copy(update={"style_form": form})
             trace = _stub_trace("MODEL_PROVIDER=stub：未调用模型，返回中性草稿")
-        return await self._reviewed_result(draft, trace)
+            diagnostics = AgentRunDiagnostics(
+                status=AgentRunStatus.COMPLETED,
+                phase=AgentPhase.DRAFT,
+                steps=0,
+            )
+        if cancel_check is not None and await cancel_check():
+            raise AgentRunError(
+                "agent_cancelled",
+                [],
+                diagnostics=AgentRunDiagnostics(
+                    status=AgentRunStatus.CANCELLED,
+                    phase=AgentPhase.SAFETY_REVIEW,
+                    failure_code=AgentFailureCode.CANCELLED,
+                ),
+            )
+        return await self._reviewed_result(draft, trace, diagnostics=diagnostics)
 
     async def restyle(self, draft: NoteDraftDto, form: StyleForm) -> WorkflowResult:
         if self._model_provider == "deepseek":
-            finalized, trace = await self._style(
+            finalized, trace, diagnostics = await self._style(
                 source=draft.source,
                 neutral_draft=draft,
                 form=form,
@@ -136,7 +177,12 @@ class ContentWorkflowService:
         else:
             candidate = draft.model_copy(update={"style_form": form})
             trace = _stub_trace("MODEL_PROVIDER=stub：未调用模型，保留当前草稿内容")
-        return await self._reviewed_result(candidate, trace)
+            diagnostics = AgentRunDiagnostics(
+                status=AgentRunStatus.COMPLETED,
+                phase=AgentPhase.DRAFT,
+                steps=0,
+            )
+        return await self._reviewed_result(candidate, trace, diagnostics=diagnostics)
 
     async def regenerate_field(
         self,
@@ -174,13 +220,27 @@ class ContentWorkflowService:
         return account, column
 
     async def _reviewed_result(
-        self, draft: NoteDraftDto, trace: list[AgentTraceStepDto]
+        self,
+        draft: NoteDraftDto,
+        trace: list[AgentTraceStepDto],
+        *,
+        diagnostics: AgentRunDiagnostics | None = None,
     ) -> WorkflowResult:
         review = await review_draft(draft)
+        trace = [
+            *trace,
+            AgentTraceStepDto(
+                order=(trace[-1].order + 1) if trace else 1,
+                kind="phase",
+                label=AgentPhase.SAFETY_REVIEW.value,
+                summary="统一事实与安全审核完成",
+                phase=AgentPhase.SAFETY_REVIEW.value,
+            ),
+        ]
         reviewed = draft.model_copy(
             update={"review": review, "status": status_for_review(review, draft)}
         )
-        return WorkflowResult(draft=reviewed, agent_trace=trace)
+        return WorkflowResult(draft=reviewed, agent_trace=trace, diagnostics=diagnostics)
 
     async def _style(
         self,
@@ -190,7 +250,9 @@ class ContentWorkflowService:
         form: StyleForm,
         account_context: str = "",
         column_context: str = "",
-    ) -> tuple[FinalizeArgs, list[AgentTraceStepDto]]:
+        cancel_check: Callable[[], Awaitable[bool]] | None = None,
+        event_sink: Callable[[AgentRuntimeEvent], Awaitable[None]] | None = None,
+    ) -> tuple[FinalizeArgs, list[AgentTraceStepDto], AgentRunDiagnostics]:
         if self._gateway is None:
             raise ContentGenerationError("model_gateway_missing")
         try:
@@ -201,12 +263,16 @@ class ContentWorkflowService:
                 form=form,
                 account_context=account_context,
                 column_context=column_context,
+                cancel_check=cancel_check,
+                event_sink=event_sink,
             )
-        except (AgentRunError, ModelGatewayError) as error:
+        except AgentRunError as error:
+            raise ContentGenerationError("content_generation_failed", agent_error=error) from error
+        except ModelGatewayError as error:
             raise ContentGenerationError("content_generation_failed") from error
         if not isinstance(result.result, FinalizeArgs):
             raise ContentGenerationError("content_generation_failed")
-        return result.result, [_trace_dto(step) for step in result.trace]
+        return result.result, [_trace_dto(step) for step in result.trace], result.diagnostics
 
     async def _generate_field_with_model(
         self, draft: NoteDraftDto, field: FieldName, form: StyleForm
@@ -239,22 +305,49 @@ class ContentWorkflowService:
                 ),
             },
         ]
+
+        def validate(content: str) -> FinalValidation:
+            if not content:
+                return FinalValidation(ok=False, error="empty_model_response")
+            try:
+                payload = json.loads(_extract_json(content))
+            except (json.JSONDecodeError, ValueError) as error:
+                return FinalValidation(ok=False, error=f"invalid_field_json:{type(error).__name__}")
+            try:
+                result: BaseModel
+                if field == "title":
+                    result = TitleFieldResult.model_validate(payload)
+                elif field == "body":
+                    result = BodyFieldResult.model_validate(payload)
+                elif field == "hashtags":
+                    result = HashtagsFieldResult.model_validate(payload)
+                else:
+                    result = CoverCopyFieldResult.model_validate(payload)
+            except (ValidationError, ValueError) as error:
+                return FinalValidation(
+                    ok=False, error=f"invalid_field_schema:{type(error).__name__}"
+                )
+            return FinalValidation(ok=True, result=result)
+
         try:
-            response = await self._gateway.chat(messages)
-            if not response.content:
-                raise ValueError("empty_model_response")
-            payload = json.loads(_extract_json(response.content))
-            result: BaseModel
-            if field == "title":
-                result = TitleFieldResult.model_validate(payload)
-            elif field == "body":
-                result = BodyFieldResult.model_validate(payload)
-            elif field == "hashtags":
-                result = HashtagsFieldResult.model_validate(payload)
-            else:
-                result = CoverCopyFieldResult.model_validate(payload)
-            return cast(dict[str, object], result.model_dump())
-        except (json.JSONDecodeError, ValidationError, ValueError, ModelGatewayError) as error:
+            runtime = AgentRuntime(
+                self._gateway,
+                max_steps=4,
+                max_revisions=2,
+                max_tool_calls=0,
+                max_same_error=2,
+                stage_timeout_seconds=120,
+            )
+            run = await runtime.run(
+                system=messages[0]["content"] if isinstance(messages[0]["content"], str) else "",
+                user=messages[1]["content"] if isinstance(messages[1]["content"], str) else "",
+                tools=[],
+                final_validator=validate,
+            )
+            if not isinstance(run.result, BaseModel):
+                raise ValueError("field_result_missing")
+            return cast(dict[str, object], run.result.model_dump())
+        except (AgentRunError, ModelGatewayError, ValidationError, ValueError) as error:
             raise ContentGenerationError("field_generation_failed") from error
 
 
@@ -304,6 +397,7 @@ def _trace_dto(step: AgentTraceStep) -> AgentTraceStepDto:
         kind=step.kind,
         label=step.label,
         summary=step.summary,
+        phase=step.phase.value if step.phase else None,
     )
 
 

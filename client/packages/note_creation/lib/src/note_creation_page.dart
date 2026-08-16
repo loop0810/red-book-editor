@@ -12,12 +12,16 @@ class NoteCreationPage extends StatefulWidget {
   // 这样 feature package 不需要知道 API Client 或具体网络实现。
   const NoteCreationPage({
     required this.generate,
+    this.generateWithProgress,
+    this.cancelAgentRun,
     this.uploadAsset,
     this.onDraftGenerated,
     super.key,
   });
 
   final GenerateNote generate;
+  final GenerateNoteWithProgress? generateWithProgress;
+  final CancelAgentRun? cancelAgentRun;
   final UploadAsset? uploadAsset;
   final Future<void> Function(StyledNoteResponse response, StyleForm form)?
   onDraftGenerated;
@@ -38,6 +42,9 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
   StyleForm _selectedForm = StyleForm.experience;
   bool _loading = false;
   String? _error;
+  String? _activeRunId;
+  String? _agentPhase;
+  String? _agentSummary;
   final _draftStore = SourceExperienceDraftStore();
 
   @override
@@ -120,7 +127,27 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
       );
       await _draftStore.save(source);
       // generate 是依赖注入进来的 Future：测试时可以替换成 fake，生产时由 API Client 实现。
-      final response = await widget.generate(source, _selectedForm);
+      final response = widget.generateWithProgress == null
+          ? await widget.generate(source, _selectedForm)
+          : await widget.generateWithProgress!(
+              source,
+              _selectedForm,
+              onRunCreated: (run) {
+                if (!mounted) return;
+                setState(() {
+                  _activeRunId = run.runId;
+                  _agentPhase = run.currentPhase;
+                });
+              },
+              onEvent: (event) {
+                if (!mounted) return;
+                setState(() {
+                  _agentPhase = event.phase;
+                  _agentSummary = event.summary;
+                });
+              },
+            );
+      _activeRunId = null;
       await _draftStore.clear();
       // 只有服务端生成成功才进入编辑器；response 同时携带 draft 和 agentTrace。
       if (mounted) {
@@ -141,7 +168,23 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
     } catch (error) {
       if (mounted) setState(() => _error = '生成失败：$error');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _activeRunId = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _cancelGeneration() async {
+    final runId = _activeRunId;
+    if (runId == null || widget.cancelAgentRun == null) return;
+    try {
+      await widget.cancelAgentRun!(runId);
+      if (mounted) setState(() => _error = '已请求取消生成');
+    } catch (error) {
+      if (mounted) setState(() => _error = '取消失败：$error');
     }
   }
 
@@ -274,6 +317,23 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
                 : const Icon(Icons.auto_awesome),
             label: Text(_loading ? '生成中…' : '生成笔记'),
           ),
+          if (_loading && widget.generateWithProgress != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              [
+                if (_agentPhase != null) '阶段：$_agentPhase',
+                ?_agentSummary,
+              ].join(' · '),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (_activeRunId != null && widget.cancelAgentRun != null)
+              TextButton.icon(
+                onPressed: _cancelGeneration,
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: const Text('取消生成'),
+              ),
+          ],
         ],
       ),
     );

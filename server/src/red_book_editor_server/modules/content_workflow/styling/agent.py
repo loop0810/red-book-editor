@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from red_book_editor_server.domain.agent import (
     AgentRunResult,
     AgentRuntime,
+    AgentRuntimeEvent,
     FinalValidation,
 )
 from red_book_editor_server.domain.contracts import (
@@ -61,11 +62,20 @@ async def style_draft(
     form: StyleForm,
     account_context: str = "",
     column_context: str = "",
+    cancel_check: Callable[[], Awaitable[bool]] | None = None,
+    event_sink: Callable[[AgentRuntimeEvent], Awaitable[None]] | None = None,
 ) -> AgentRunResult:
     # 这里是业务 Agent 的入口：准备业务上下文和工具；真正的通用循环
     # 放在 domain/agent.py，因此“写育儿文案”和“如何循环”彼此解耦。
     profile = load_style_profile(form)
-    runtime = AgentRuntime(gateway, max_steps=12)
+    runtime = AgentRuntime(
+        gateway,
+        max_steps=12,
+        max_revisions=2,
+        max_tool_calls=12,
+        max_same_error=2,
+        stage_timeout_seconds=120,
+    )
     return await runtime.run(
         system=SYSTEM_PROMPT,
         user=_build_user_prompt(
@@ -78,6 +88,8 @@ async def style_draft(
         ),
         tools=build_styling_tools(),
         final_validator=_make_final_validator(source, profile),
+        cancel_check=cancel_check,
+        event_sink=event_sink,
     )
 
 

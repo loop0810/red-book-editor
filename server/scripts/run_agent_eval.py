@@ -11,7 +11,14 @@ from typing import Any
 from evals.agent_baseline.hard_failures import automatic_hard_failures
 from red_book_editor_server.app.config import get_settings
 from red_book_editor_server.app.dependencies import build_model_gateway
-from red_book_editor_server.domain.agent import AgentRunError, AgentTraceStep
+from red_book_editor_server.domain.agent import (
+    AgentFailureCode,
+    AgentRunDiagnostics,
+    AgentPhase,
+    AgentRunError,
+    AgentRunStatus,
+    AgentTraceStep,
+)
 from red_book_editor_server.domain.contracts import SourceExperienceDto, StyleForm
 from red_book_editor_server.domain.ports import ModelGatewayError
 from red_book_editor_server.infrastructure.llm import DeepSeekModelGateway
@@ -76,16 +83,40 @@ async def run_case(
                 "elapsed_ms": round((time.perf_counter() - started) * 1000),
                 "draft": result.result.model_dump(mode="json"),
                 "agent_trace": [_trace_record(step) for step in trace],
+                "agent_diagnostics": _diagnostics_record(result.diagnostics),
                 "error": None,
             },
         )
     except AgentRunError as error:
         trace = error.trace
-        return _failed_record(case, attempt, started, str(error), trace)
-    except (ModelGatewayError, ValueError, TypeError, KeyError) as error:
-        return _failed_record(case, attempt, started, type(error).__name__, trace)
+        return _failed_record(case, attempt, started, str(error), trace, error.diagnostics)
+    except ModelGatewayError as error:
+        return _failed_record(
+            case,
+            attempt,
+            started,
+            type(error).__name__,
+            trace,
+            failure_code=AgentFailureCode.MODEL_ERROR,
+        )
+    except (ValueError, TypeError, KeyError) as error:
+        return _failed_record(
+            case,
+            attempt,
+            started,
+            type(error).__name__,
+            trace,
+            failure_code=AgentFailureCode.INPUT_ERROR,
+        )
     except Exception as error:  # pragma: no cover - protects a whole baseline run
-        return _failed_record(case, attempt, started, type(error).__name__, trace)
+        return _failed_record(
+            case,
+            attempt,
+            started,
+            type(error).__name__,
+            trace,
+            failure_code=AgentFailureCode.UNEXPECTED_ERROR,
+        )
 
 
 def _failed_record(
@@ -94,6 +125,8 @@ def _failed_record(
     started: float,
     error: str,
     trace: list[AgentTraceStep],
+    diagnostics: AgentRunDiagnostics | None = None,
+    failure_code: AgentFailureCode | None = None,
 ) -> dict[str, Any]:
     return _annotate_record(
         case,
@@ -104,6 +137,14 @@ def _failed_record(
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
             "draft": None,
             "agent_trace": [_trace_record(step) for step in trace],
+            "agent_diagnostics": _diagnostics_record(
+                diagnostics
+                or AgentRunDiagnostics(
+                    status=AgentRunStatus.FAILED,
+                    phase=AgentPhase.COLLECT_CONTEXT,
+                    failure_code=failure_code,
+                )
+            ),
             "error": error,
         },
     )
@@ -120,6 +161,19 @@ def _trace_record(step: AgentTraceStep) -> dict[str, Any]:
         "kind": step.kind,
         "label": step.label,
         "summary": step.summary[:400],
+        "phase": step.phase.value if step.phase else None,
+    }
+
+
+def _diagnostics_record(diagnostics: AgentRunDiagnostics) -> dict[str, Any]:
+    return {
+        "status": diagnostics.status.value,
+        "phase": diagnostics.phase.value,
+        "steps": diagnostics.steps,
+        "revisions": diagnostics.revisions,
+        "tool_calls": diagnostics.tool_calls,
+        "repeated_errors": diagnostics.repeated_errors,
+        "failure_code": diagnostics.failure_code.value if diagnostics.failure_code else None,
     }
 
 
@@ -159,7 +213,7 @@ async def main(args: argparse.Namespace) -> Path:
             records.append(await run_case(gateway, case, attempt))
 
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "run_id": args.run_id,
         "started_at": datetime.now(UTC).isoformat(),
         "model_provider": settings.model_provider,

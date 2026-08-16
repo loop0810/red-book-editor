@@ -85,6 +85,10 @@ async def test_golden_path_produces_styled_draft_with_trace() -> None:
     assert "load_style_profile" in labels
     assert "critique_draft" in labels
     assert "finalize_note" in labels
+    assert result.trace[0].phase == "collect_context"
+    assert result.trace[1].phase == "collect_context"
+    assert any(step.phase == "critique" for step in result.trace)
+    assert any(step.phase == "finalize" for step in result.trace)
     assert [step.kind for step in result.trace] == [
         "model",
         "tool",

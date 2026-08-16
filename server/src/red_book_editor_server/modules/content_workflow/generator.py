@@ -12,6 +12,10 @@ from red_book_editor_server.domain.ports import ContentGenerator
 class ContentGenerationError(RuntimeError):
     """模型超时或返回无法解析的结构化结果。"""
 
+    def __init__(self, message: str, *, agent_error: Exception | None = None) -> None:
+        super().__init__(message)
+        self.agent_error = agent_error
+
 
 def normalize_source(source: SourceExperienceDto) -> SourceExperienceDto:
     """清理空白但不补写用户没有提供的事实。"""
