@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from pydantic import ValidationError
 
 from red_book_editor_server.domain.agent import (
+    AGENT_RUNTIME_VERSION,
     AgentRunResult,
     AgentRuntime,
     AgentRuntimeEvent,
@@ -54,6 +55,15 @@ SYSTEM_PROMPT = (
     '6. 最终回答必须是合法 JSON：{"form": "...", "draft": {...},'
     ' "image_suggestions": [...]}。'
 )
+STYLING_PROMPT_VERSION = "styling-system-v1"
+STYLING_AGENT_CONFIG_VERSION = "styling-agent-config-v1"
+STYLING_AGENT_CONFIG = {
+    "max_steps": 12,
+    "max_revisions": 2,
+    "max_tool_calls": 12,
+    "max_same_error": 2,
+    "stage_timeout_seconds": 120,
+}
 
 
 async def style_draft(
@@ -72,11 +82,11 @@ async def style_draft(
     profile = load_style_profile(form)
     runtime = AgentRuntime(
         gateway,
-        max_steps=12,
-        max_revisions=2,
-        max_tool_calls=12,
-        max_same_error=2,
-        stage_timeout_seconds=120,
+        max_steps=STYLING_AGENT_CONFIG["max_steps"],
+        max_revisions=STYLING_AGENT_CONFIG["max_revisions"],
+        max_tool_calls=STYLING_AGENT_CONFIG["max_tool_calls"],
+        max_same_error=STYLING_AGENT_CONFIG["max_same_error"],
+        stage_timeout_seconds=STYLING_AGENT_CONFIG["stage_timeout_seconds"],
     )
     return await runtime.run(
         system=SYSTEM_PROMPT,

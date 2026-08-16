@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     model_timeout_seconds: float = 60.0
     model_max_retries: int = 2
+    model_max_tokens: int | None = None
 
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 

@@ -25,6 +25,23 @@ REQUIRED_DIAGNOSTIC_FIELDS = {
     "repeated_errors",
     "failure_code",
 }
+REQUIRED_EVALUATION_CONTEXT_FIELDS = {
+    "manifest_version",
+    "manifest_sha256",
+    "model_provider",
+    "model",
+    "model_max_tokens",
+    "scorecard_version",
+    "prompt_version",
+    "profile_version",
+    "agent_runtime_version",
+    "agent_config_version",
+    "cases_sha256",
+    "scorecard_sha256",
+    "prompt_sha256",
+    "profile_sha256",
+    "agent_config_sha256",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -88,6 +105,15 @@ def validate_run(run: Any, case_ids: set[str]) -> None:
     schema_version = run["schema_version"]
     if not isinstance(schema_version, int) or schema_version < 1:
         raise ValueError("run.schema_version must be a positive integer")
+    if schema_version >= 4:
+        context = run.get("evaluation_context")
+        if not isinstance(context, dict):
+            raise ValueError("schema 4 run requires evaluation_context")
+        missing_context = REQUIRED_EVALUATION_CONTEXT_FIELDS - context.keys()
+        if missing_context:
+            raise ValueError(
+                f"evaluation_context is missing fields: {sorted(missing_context)}"
+            )
     for record in records:
         if not isinstance(record, dict):
             raise ValueError("each run record must be an object")
@@ -109,6 +135,24 @@ def validate_run(run: Any, case_ids: set[str]) -> None:
             for field in ("steps", "revisions", "tool_calls", "repeated_errors"):
                 if not isinstance(diagnostics[field], int) or diagnostics[field] < 0:
                     raise ValueError(f"{identity}: diagnostics.{field} must be non-negative")
+        if schema_version >= 4:
+            diagnostics = record["agent_diagnostics"]
+            for field in (
+                "model_calls",
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+            ):
+                if not isinstance(diagnostics[field], int) or diagnostics[field] < 0:
+                    raise ValueError(f"{identity}: diagnostics.{field} must be non-negative")
+            if not isinstance(diagnostics["usage_available"], bool):
+                raise ValueError(f"{identity}: diagnostics.usage_available must be boolean")
+            fact = record.get("fact_coverage")
+            if not isinstance(fact, dict) or not isinstance(fact.get("ratio"), (int, float)):
+                raise ValueError(f"{identity}: fact_coverage must contain numeric ratio")
+            cost = record.get("estimated_cost_usd")
+            if cost is not None and (not isinstance(cost, (int, float)) or cost < 0):
+                raise ValueError(f"{identity}: estimated_cost_usd must be non-negative or null")
     validate_no_sensitive_keys(run)
 
 

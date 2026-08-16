@@ -16,6 +16,7 @@ from red_book_editor_server.domain.agent import (
     FinalValidation,
     Tool,
 )
+from red_book_editor_server.domain.ports import ModelResponse, ModelUsage
 from red_book_editor_server.modules.content_workflow.styling.tools import build_styling_tools
 from tests.unit.fakes import ScriptedGateway, text_response, tool_call
 
@@ -83,6 +84,30 @@ async def test_tool_calling_round_trip() -> None:
     assert result.diagnostics.status is AgentRunStatus.COMPLETED
     assert result.diagnostics.steps == 2
     assert result.diagnostics.tool_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_aggregates_model_usage_without_message_content() -> None:
+    gateway = ScriptedGateway(
+        [
+            ModelResponse(
+                content='{"ok": true}',
+                usage=ModelUsage(prompt_tokens=10, completion_tokens=4, total_tokens=14),
+            )
+        ]
+    )
+    result = await AgentRuntime(gateway, max_steps=2).run(
+        system="test",
+        user="hello",
+        tools=[],
+        final_validator=_json_validator(),
+    )
+
+    assert result.diagnostics.model_calls == 1
+    assert result.diagnostics.prompt_tokens == 10
+    assert result.diagnostics.completion_tokens == 4
+    assert result.diagnostics.total_tokens == 14
+    assert result.diagnostics.usage_available is True
 
 
 @pytest.mark.asyncio

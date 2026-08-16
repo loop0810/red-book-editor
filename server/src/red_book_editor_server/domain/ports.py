@@ -105,11 +105,20 @@ class ToolCall(BaseModel):
     arguments: str = "{}"
 
 
+class ModelUsage(BaseModel):
+    """模型调用的计量信息，不包含 prompt 或模型原始消息。"""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
 class ModelResponse(BaseModel):
     """模型网关的统一响应：纯文本、工具调用，或两者都有。"""
 
     content: str | None = None
     tool_calls: list[ToolCall] | None = None
+    usage: ModelUsage | None = None
 
 
 class ModelGatewayError(RuntimeError):

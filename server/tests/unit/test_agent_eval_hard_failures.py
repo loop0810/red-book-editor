@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from evals.agent_baseline.hard_failures import automatic_hard_failures
+from evals.agent_baseline.hard_failures import automatic_hard_failures, fact_coverage
 
 
 def _record(body: str) -> dict[str, object]:
@@ -54,3 +54,22 @@ def test_nested_finalize_result_does_not_create_false_fact_failure() -> None:
     }
 
     assert automatic_hard_failures(case, record) == []
+
+
+def test_fact_coverage_accepts_common_chinese_aspect_particle() -> None:
+    case = {
+        "source": {
+            "baby_month": 12,
+            "scenario": "宝宝周岁了",
+            "actions": ["没有邀请很多人", "邀请父母和朋友为宝宝举行周岁宴"],
+            "observations": "大家都很开心",
+            "notes": "",
+        }
+    }
+    record = _record(
+        "宝宝周岁了，宝宝12个月了，没有邀请很多人，邀请父母和朋友为宝宝举行了周岁宴，大家都很开心。"
+    )
+
+    coverage = fact_coverage(case, record)
+
+    assert coverage["ratio"] == 1.0

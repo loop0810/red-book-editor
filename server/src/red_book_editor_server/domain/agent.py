@@ -12,6 +12,8 @@ from pydantic import BaseModel
 
 from red_book_editor_server.domain.ports import ModelGateway, ToolCall
 
+AGENT_RUNTIME_VERSION = "agent-runtime-v1"
+
 T = TypeVar("T")
 
 
@@ -51,6 +53,11 @@ class AgentRunDiagnostics(BaseModel):
     revisions: int = 0
     tool_calls: int = 0
     repeated_errors: int = 0
+    model_calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    usage_available: bool = False
     failure_code: AgentFailureCode | None = None
 
 
@@ -189,6 +196,11 @@ class AgentRuntime:
         revisions = 0
         tool_calls = 0
         repeated_errors = 0
+        model_calls = 0
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        usage_available = False
         last_error: str | None = None
         current_phase = AgentPhase.COLLECT_CONTEXT
         phase_started = time.monotonic()
@@ -205,6 +217,11 @@ class AgentRuntime:
                 revisions=revisions,
                 tool_calls=tool_calls,
                 repeated_errors=repeated_errors,
+                model_calls=model_calls,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                usage_available=usage_available,
                 failure_code=failure_code,
             )
 
@@ -279,6 +296,12 @@ class AgentRuntime:
             # 一轮循环只有两种结果：模型要求工具，或模型尝试提交最终答案。
             # max_steps 是保险丝，独立预算负责防止特定类型的循环。
             response = await invoke(lambda: self._gateway.chat(messages, tools=tool_schemas))
+            model_calls += 1
+            if response.usage is not None:
+                usage_available = True
+                prompt_tokens += response.usage.prompt_tokens
+                completion_tokens += response.usage.completion_tokens
+                total_tokens += response.usage.total_tokens
             order += 1
             trace.append(
                 AgentTraceStep(

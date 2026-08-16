@@ -16,6 +16,34 @@
 
 记录按完成时间倒序追加，不删除历史内容。若一个 change 只部分解决某个问题，应在“覆盖范围”中明确边界，避免把路线图中的计划误认为已经实现。
 
+## 2026-08-16：complete-p1-06-quality-gate
+
+### 关联问题
+
+来源：[`red-book-editor-agent-evolution-roadmap.md`](./red-book-editor-agent-evolution-roadmap.md)
+
+- `P1-06`：已有 baseline、人工 scorecard 和自动硬失败初筛，但缺少可量化事实覆盖率、版本绑定、Token/成本记录、人工评分完整性校验和能够阻断不合格结果的质量门禁。
+
+OpenSpec：[`complete-p1-06-quality-gate`](../../openspec/changes/complete-p1-06-quality-gate/)
+
+### 实际改动
+
+- 增加 `quality-gate-manifest.json`，用案例集、scorecard、system prompt、style profile、Agent runtime、模型和配置摘要绑定一次评测；记录只保存版本、SHA-256 摘要、计数和脱敏诊断，不保存 prompt、模型原始消息、API key、访问令牌或图片内容。
+- `ModelResponse` 和 DeepSeek adapter 支持可选 usage；Agent diagnostics 汇总模型调用次数、prompt/completion/total token，runner 升级为 schema 4 并计算来源事实覆盖率、运行失败率、硬失败率、人工硬失败率、人工大改率和估算成本。
+- 新增 `quality_gate.py` 与 `make eval-quality-gate`，校验 manifest/运行 identity/usage/价格/完整人工评分，按阈值生成 JSON/Markdown 报告，并支持候选与历史 baseline 按案例、维度和诊断对比；缺少证据或超阈值返回非零退出码。
+- 保持 schema 1/2/3 评测记录可读取，更新 agent-evaluation、agent-quality-gate 主 spec、内容工作流契约、评测说明和路线图。
+
+### 验证结果
+
+- 服务端 `make lock-check`、`make format-check`、`make typecheck` 通过；`make test` 为 76 passed、16 deselected；使用本机 PostgreSQL 的 integration-test 为 16 passed、76 deselected，测试后执行 `make migrate` 恢复到 Alembic head。
+- `make eval-validate` 通过（5 个案例）；schema 4 stub runner 生成记录并通过 `validate_agent_eval`；质量门禁单元测试 3 passed，并覆盖完整证据通过、版本漂移/usage 缺失、人工评分/事实覆盖失败。
+- 旧 schema 3 baseline 通过 `make eval-quality-gate` 时按预期失败；`openspec validate --all --strict` 为 12 passed、0 failed；`git diff --check` 通过。
+
+### 覆盖范围与后续问题
+
+- 本 change 完成质量门禁实现；使用本地 `key.json` 注入 key、`deepseek-v4-flash`、显式 USD 价格和 `MODEL_MAX_TOKENS=2048` 实际生成了 schema 4 候选并完成逐条人工评分。门禁结果为失败：成功率 0.90、事实覆盖均值 0.90、Agent 失败率 0.10、自动硬失败率 0.20、人工硬失败率 1.00、人工均分 8.1/12，仅成本阈值通过。该候选及历史不可用 run/score/report 已按要求清理，未提交 key；下一步需修复安全/事实边界与 Agent 收敛问题后重新建立 baseline。
+- 自动事实覆盖率仍是可解释的文本初筛，不替代人工语义判断；`P1-04` 图片理解与素材绑定、Memory/RAG/MCP 仍未覆盖。
+
 ## 2026-08-16：complete-milestone3-suggestion-history-and-precision-diff
 
 ### 关联问题

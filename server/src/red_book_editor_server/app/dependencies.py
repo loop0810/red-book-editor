@@ -29,6 +29,7 @@ def build_model_gateway(settings: Settings) -> ModelGateway:
             settings.deepseek_base_url,
             settings.model_timeout_seconds,
             settings.model_max_retries,
+            settings.model_max_tokens,
         )
     return StubModelGateway()
 
@@ -40,6 +41,7 @@ def _build_deepseek_gateway(
     base_url: str,
     timeout_seconds: float,
     max_retries: int,
+    max_tokens: int | None,
 ) -> DeepSeekModelGateway:
     """复用进程内网关，让其响应缓存跨请求生效。"""
 
@@ -49,4 +51,5 @@ def _build_deepseek_gateway(
         base_url=base_url,
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
+        max_tokens=max_tokens,
     )

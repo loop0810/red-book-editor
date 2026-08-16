@@ -1,0 +1,27 @@
+{
+  "manifest_version": "p1-06-quality-gate-v1",
+  "scorecard_version": "scorecard-v1",
+  "model_provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "model_max_tokens": 2048,
+  "min_repetitions": 2,
+  "require_usage": true,
+  "require_cost": true,
+  "thresholds": {
+    "min_success_rate": 1.0,
+    "min_fact_coverage": 1.0,
+    "max_hard_failure_rate": 0.0,
+    "max_manual_hard_failure_rate": 0.0,
+    "max_agent_failure_rate": 0.0,
+    "min_manual_average_score": 9.0,
+    "max_major_rewrite_rate": 0.0,
+    "max_estimated_cost_usd": 5.0
+  },
+  "expected_digests": {
+    "cases_sha256": "90352acd3d22074ba65daacc75ca59f57cbda948aa8d50b5fa9f996bff664d1b",
+    "scorecard_sha256": "35710ab57160910a764f2562fd962cdea11382747e90ce6da4a369e30b8750b3",
+    "prompt_sha256": "cf0d2505cdff75047f86f9a50843bf8932cd532aa27c3240d8fc997308188dcf",
+    "profile_sha256": "e07a46a5c0a679811a0d405b56fd0e77b817ae7a49af16ed03dfe01ed2cadfaf",
+    "agent_config_sha256": "29fa7ea29445dd43e9b9cd67fa258cf3e5c19da22ff9f89b96611525934d60f7"
+  }
+}

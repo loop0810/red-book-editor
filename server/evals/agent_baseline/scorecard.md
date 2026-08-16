@@ -1,5 +1,7 @@
 # Agent Baseline Scorecard
 
+当前 scorecard 版本：`scorecard-v1`。每个候选 run 的每个 `case_id`/`attempt` 都必须有一条评分记录；质量门禁会校验六个维度、总分、硬失败、失败原因、人工最终修改稿和 reviewer note。
+
 每一次模型输出单独评分。每个维度 0～2 分，总分 12 分；分数不能抵消硬失败。
 
 | 维度 | 0 分 | 1 分 | 2 分 |
@@ -45,3 +47,5 @@ reviewer_note: ""
 ```
 
 人工评分时应优先写清楚低分原因，并保留人工最终修改稿，便于下一阶段定位事实和安全规则缺口。
+
+人工评分完成后，运行 `make eval-quality-gate`。质量门禁还会校验案例集、scorecard、prompt、style profile、Agent runtime 和门禁配置摘要；旧 run 可以读取，但缺少这些摘要、token usage 或显式价格的记录不能作为当前质量通过证据。

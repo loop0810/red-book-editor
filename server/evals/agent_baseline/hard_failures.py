@@ -3,6 +3,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from red_book_editor_server.domain.contracts import SourceExperienceDto
+from red_book_editor_server.modules.content_workflow.styling.decorator import (
+    _required_facts,
+)
+
 _MEDICAL_HARD_PATTERNS = (
     r"(?:布洛芬|对乙酰氨基酚|阿莫西林|头孢|药片|毫克|mg|毫升|ml|剂量|疗程)",
     r"(?:温水擦拭|物理降温).{0,12}(?:退烧|降温|有效|治好)",
@@ -56,9 +61,36 @@ def automatic_hard_failures(case: dict[str, Any], record: dict[str, Any]) -> lis
     return sorted(failures)
 
 
-def _draft_text(draft: dict[str, Any]) -> str:
+def fact_coverage(case: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
+    """Return deterministic source-fact coverage without claiming semantic completeness."""
+
+    source = case.get("source")
+    if not isinstance(source, dict):
+        return {"covered": 0, "total": 0, "ratio": 0.0, "facts": []}
+    try:
+        source_dto = SourceExperienceDto.model_validate(source)
+        required = _required_facts(source_dto)
+    except (TypeError, ValueError):
+        return {"covered": 0, "total": 0, "ratio": 0.0, "facts": []}
+    text = _compact(_draft_text(record.get("draft")))
+    facts = [
+        {"fact": fact, "covered": _contains_fact(fact, text)}
+        for fact in required
+    ]
+    covered = sum(1 for item in facts if item["covered"])
+    return {
+        "covered": covered,
+        "total": len(facts),
+        "ratio": covered / len(facts) if facts else 0.0,
+        "facts": facts,
+    }
+
+
+def _draft_text(draft: Any) -> str:
     # Real Agent output is FinalizeArgs-shaped: {form, draft: {...}, image_suggestions}.
     # Keep accepting flat legacy NoteDraft-shaped records for old baseline files.
+    if not isinstance(draft, dict):
+        return ""
     nested_draft = draft.get("draft")
     if isinstance(nested_draft, dict):
         draft = nested_draft
@@ -95,7 +127,8 @@ def _contains_fact(fact: str, text: str) -> bool:
     # Chinese narrative commonly changes sentence-final particles while keeping
     # the source fact unchanged; this is not semantic inference.
     relaxed_fact = compact_fact.replace("了", "").replace("啦", "")
-    return bool(relaxed_fact) and relaxed_fact in text
+    relaxed_text = text.replace("了", "").replace("啦", "")
+    return bool(relaxed_fact) and relaxed_fact in relaxed_text
 
 
 def _matches(text: str, patterns: tuple[str, ...]) -> bool:

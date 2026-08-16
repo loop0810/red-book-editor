@@ -76,7 +76,7 @@ Agent Runtime 在服务端维护独立的总步骤、修订、工具调用、重
 
 AgentRun 只保存关联笔记和运行诊断，不保存完整 prompt、模型消息、工具原始参数、模型密钥、访问令牌、用户正文或图片内容。服务端重启后遗留的 `running` 运行标记为 `interrupted`；恢复是基于已持久化笔记输入的重新执行，不承诺模型上下文 checkpoint。
 
-评测 runner schema version 3 在每条 run record 的 `agent_diagnostics` 中保存运行状态、最终阶段、计数器和失败代码；历史 schema version 1/2 记录保持兼容读取。该诊断结构暂不进入数据库，也不改变 `NoteStatus` 或导出门禁语义。
+评测 runner schema version 4 在每条 run record 的 `agent_diagnostics` 中保存运行状态、最终阶段、计数器、失败代码、模型调用次数和 prompt/completion/total token；顶层 `evaluation_context` 只保存案例集、scorecard、prompt、style profile、Agent 配置和门禁 manifest 的版本/摘要，以及显式价格配置和估算成本。历史 schema version 1/2/3 记录保持兼容读取，但缺少版本、usage 或成本证据的旧记录不能通过 P1-06 quality gate。评测记录不保存完整 prompt、模型消息、密钥、访问令牌、图片内容或未脱敏用户正文；该诊断结构暂不进入数据库，也不改变 `NoteStatus` 或导出门禁语义。
 
 ## V1 endpoints
 

@@ -11,6 +11,7 @@ import httpx
 from red_book_editor_server.domain.ports import (
     ModelGatewayError,
     ModelResponse,
+    ModelUsage,
     ToolCall,
 )
 
@@ -26,6 +27,7 @@ class DeepSeekModelGateway:
         base_url: str = "https://api.deepseek.com",
         timeout_seconds: float = 60.0,
         max_retries: int = 2,
+        max_tokens: int | None = None,
         http_client: httpx.AsyncClient | None = None,
         cache_ttl_seconds: float = 300.0,
         cache_max_entries: int = 128,
@@ -35,6 +37,7 @@ class DeepSeekModelGateway:
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
         self._max_retries = max(0, max_retries)
+        self._max_tokens = max_tokens
         self._http_client = http_client
         self._cache_ttl_seconds = max(0.0, cache_ttl_seconds)
         self._cache_max_entries = max(0, cache_max_entries)
@@ -59,6 +62,8 @@ class DeepSeekModelGateway:
         payload: dict[str, Any] = {"model": self._model, "messages": messages}
         if tools is not None:
             payload["tools"] = tools
+        if self._max_tokens is not None:
+            payload["max_tokens"] = self._max_tokens
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
@@ -135,4 +140,11 @@ class DeepSeekModelGateway:
             )
             for call in message.get("tool_calls") or []
         ]
-        return ModelResponse(content=content, tool_calls=tool_calls or None)
+        raw_usage = data.get("usage")
+        usage = None
+        if isinstance(raw_usage, dict):
+            try:
+                usage = ModelUsage.model_validate(raw_usage)
+            except (TypeError, ValueError):
+                usage = None
+        return ModelResponse(content=content, tool_calls=tool_calls or None, usage=usage)

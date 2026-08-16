@@ -17,11 +17,15 @@ def _client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncCl
 def _completion(
     content: str | None = None,
     tool_calls: list[dict[str, object]] | None = None,
+    usage: dict[str, int] | None = None,
 ) -> dict[str, object]:
     message: dict[str, object] = {"role": "assistant", "content": content}
     if tool_calls:
         message["tool_calls"] = tool_calls
-    return {"choices": [{"message": message}]}
+    response: dict[str, object] = {"choices": [{"message": message}]}
+    if usage is not None:
+        response["usage"] = usage
+    return response
 
 
 @pytest.mark.asyncio
@@ -50,6 +54,22 @@ async def test_chat_parses_tool_calls() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_includes_configured_max_tokens() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content)["max_tokens"] == 2048
+        return httpx.Response(200, json=_completion(content="ok"))
+
+    gateway = DeepSeekModelGateway(
+        api_key="sk-test-123",
+        max_tokens=2048,
+        http_client=_client(handler),
+    )
+    response = await gateway.chat([{"role": "user", "content": "hello"}])
+
+    assert response.content == "ok"
+
+
+@pytest.mark.asyncio
 async def test_chat_returns_plain_text() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_completion(content="plain answer"))
@@ -59,6 +79,26 @@ async def test_chat_returns_plain_text() -> None:
 
     assert response.content == "plain answer"
     assert response.tool_calls is None
+
+
+@pytest.mark.asyncio
+async def test_chat_parses_optional_usage_without_retaining_raw_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_completion(
+                content="plain answer",
+                usage={"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+            ),
+        )
+
+    gateway = DeepSeekModelGateway(api_key="sk-test-123", http_client=_client(handler))
+    response = await gateway.chat([{"role": "user", "content": "hello"}])
+
+    assert response.usage is not None
+    assert response.usage.prompt_tokens == 11
+    assert response.usage.completion_tokens == 7
+    assert not hasattr(response, "messages")
 
 
 @pytest.mark.asyncio

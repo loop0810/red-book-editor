@@ -1,7 +1,9 @@
-.PHONY: lock-check format format-check lint typecheck test integration-test migrate run eval-baseline eval-validate
+.PHONY: lock-check format format-check lint typecheck test integration-test migrate run eval-baseline eval-validate eval-quality-gate
 
 UV_CACHE_DIR ?= /tmp/red-book-editor-uv-cache
 UV_RUN = UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project .
+SCORE_ID ?= $(RUN_ID)
+BASELINE_SCORE_ID ?= $(BASELINE_RUN_ID)
 
 lock-check:
 	UV_CACHE_DIR="$(UV_CACHE_DIR)" uv lock --check
@@ -35,3 +37,11 @@ eval-baseline:
 
 eval-validate:
 	$(UV_RUN) python scripts/validate_agent_eval.py --cases evals/agent_baseline/cases.json
+
+eval-quality-gate:
+	@test -n "$(RUN_ID)" || (echo "RUN_ID is required" >&2; exit 2)
+	@test -n "$(SCORE_ID)" || (echo "SCORE_ID is required" >&2; exit 2)
+	$(UV_RUN) python -m scripts.quality_gate \
+		--run "evals/agent_baseline/runs/$(RUN_ID).json" \
+		--scores "evals/agent_baseline/scores/$(SCORE_ID).json" \
+		$(if $(BASELINE_RUN_ID),--baseline-run "evals/agent_baseline/runs/$(BASELINE_RUN_ID).json" --baseline-scores "evals/agent_baseline/scores/$(BASELINE_SCORE_ID).json",)
