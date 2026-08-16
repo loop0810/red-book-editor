@@ -41,6 +41,13 @@ class ClaimSupport(StrEnum):
     UNSUPPORTED = "unsupported"
 
 
+class EditableField(StrEnum):
+    TITLE = "title"
+    BODY = "body"
+    HASHTAGS = "hashtags"
+    COVER_COPY = "cover_copy"
+
+
 class SourceFactDto(BaseModel):
     fact_id: str = Field(min_length=1)
     source_path: str = Field(min_length=1)
@@ -86,6 +93,7 @@ class ReviewFindingDto(BaseModel):
     level: RiskLevel
     code: str
     message: str
+    field: str | None = Field(default=None, max_length=64)
     matched_text: str | None = None
     evidence_fact_ids: list[str] = Field(default_factory=list)
 
@@ -108,6 +116,21 @@ class ReviewResultDto(BaseModel):
     content_digest: str | None = None
     audit_version: str | None = None
     policy_version: str | None = None
+
+
+class FieldSuggestionDto(BaseModel):
+    """只携带一个目标字段的 AI 候选及其审核元数据。"""
+
+    suggestion_id: UUID
+    note_id: UUID
+    field: EditableField
+    value: str | list[str]
+    base_field_digest: str = Field(min_length=1)
+    base_content_digest: str = Field(min_length=1)
+    review: ReviewResultDto | None = None
+    evidence: list[str] = Field(default_factory=list)
+    evidence_fact_ids: list[str] = Field(default_factory=list)
+    created_at: datetime
 
 
 class ToneProfile(BaseModel):

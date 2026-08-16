@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ValidationError
 
@@ -24,6 +24,8 @@ from red_book_editor_server.domain.contracts import (
     AccountProfileDto,
     AgentTraceStepDto,
     ContentColumnDto,
+    EditableField,
+    FieldSuggestionDto,
     NoteDraftDto,
     SourceExperienceDto,
     StyledNoteResponseDto,
@@ -40,7 +42,14 @@ from red_book_editor_server.modules.content_workflow.generator import (
     StubContentGenerator,
     generate_with_retry,
 )
-from red_book_editor_server.modules.content_workflow.review import review_draft, status_for_review
+from red_book_editor_server.modules.content_workflow.fact_ledger import (
+    content_digest,
+    field_digest,
+)
+from red_book_editor_server.modules.content_workflow.review import (
+    review_draft,
+    status_for_review,
+)
 from red_book_editor_server.modules.content_workflow.styling.agent import (
     finalize_to_note_draft,
     style_draft,
@@ -189,7 +198,7 @@ class ContentWorkflowService:
         draft: NoteDraftDto,
         field: FieldName,
         form: StyleForm | None = None,
-    ) -> NoteDraftDto:
+    ) -> FieldSuggestionDto:
         effective_form = form or draft.style_form
         if effective_form is None:
             raise StyleFormRequiredError("style_form_required")
@@ -197,13 +206,31 @@ class ContentWorkflowService:
             values = await self._generate_field_with_model(draft, field, effective_form)
         else:
             values = _generate_stub_field(draft, field, effective_form)
-        # 只覆盖请求字段；来源事实、用户编辑过的其余字段和表达形式都沿用原草稿。
+        # 只在内存中的候选草稿覆盖请求字段；来源事实、用户编辑过的其余字段
+        # 和表达形式都沿用原草稿。HTTP 响应不会把这个完整草稿返回给客户端。
         candidate = draft.model_copy(
             update={**values, "style_form": effective_form, "updated_at": datetime.now(UTC)}
         )
         review = await review_draft(candidate)
-        return candidate.model_copy(
-            update={"review": review, "status": status_for_review(review, candidate)}
+        normalized_field = EditableField(field)
+        field_claims = [
+            item
+            for item in review.claim_audit
+            if _normalize_audit_field(item.field) == normalized_field.value
+        ]
+        evidence = [text for item in field_claims for text in item.evidence]
+        evidence_fact_ids = [fact_id for item in field_claims for fact_id in item.evidence_fact_ids]
+        return FieldSuggestionDto(
+            suggestion_id=uuid4(),
+            note_id=draft.note_id,
+            field=normalized_field,
+            value=_field_value(candidate, normalized_field),
+            base_field_digest=field_digest(draft, normalized_field),
+            base_content_digest=content_digest(draft),
+            review=review,
+            evidence=list(dict.fromkeys(evidence)),
+            evidence_fact_ids=list(dict.fromkeys(evidence_fact_ids)),
+            created_at=datetime.now(UTC),
         )
 
     async def _load_context(
@@ -373,6 +400,24 @@ def _generate_stub_field(
     if field == "hashtags":
         return {"hashtags": ["#育儿日常", f"#{source.baby_month}个月宝宝", f"#{source.scenario}"]}
     return {"cover_copy": source.scenario}
+
+
+def _field_value(draft: NoteDraftDto, field: EditableField) -> str | list[str]:
+    if field is EditableField.TITLE:
+        return draft.title_candidates
+    if field is EditableField.BODY:
+        return draft.body
+    if field is EditableField.HASHTAGS:
+        return draft.hashtags
+    return draft.cover_copy
+
+
+def _normalize_audit_field(field: str) -> str:
+    if field.startswith("title_candidates"):
+        return EditableField.TITLE.value
+    if field.startswith("hashtags"):
+        return EditableField.HASHTAGS.value
+    return field
 
 
 def _account_context(account: AccountProfileDto | None) -> str:

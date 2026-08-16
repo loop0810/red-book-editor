@@ -8,6 +8,36 @@ enum ClaimSupport { supported, uncertain, unsupported }
 
 enum StyleForm { popularScience, experience, advertorial }
 
+enum EditableField { title, body, hashtags, coverCopy }
+
+enum SuggestionStatus { pending, accepted, rejected, stale }
+
+String editableFieldToApi(EditableField field) {
+  switch (field) {
+    case EditableField.title:
+      return 'title';
+    case EditableField.body:
+      return 'body';
+    case EditableField.hashtags:
+      return 'hashtags';
+    case EditableField.coverCopy:
+      return 'cover_copy';
+  }
+}
+
+EditableField editableFieldFromApi(String value) {
+  switch (value) {
+    case 'body':
+      return EditableField.body;
+    case 'hashtags':
+      return EditableField.hashtags;
+    case 'cover_copy':
+      return EditableField.coverCopy;
+    default:
+      return EditableField.title;
+  }
+}
+
 String styleFormToApi(StyleForm form) {
   // Dart enum 使用 camelCase，HTTP 契约使用 snake_case；转换集中放在这里。
   switch (form) {
@@ -90,6 +120,7 @@ class ReviewFinding {
     required this.level,
     required this.code,
     required this.message,
+    this.field,
     this.matchedText,
     this.evidenceFactIds = const [],
   });
@@ -97,8 +128,98 @@ class ReviewFinding {
   final RiskLevel level;
   final String code;
   final String message;
+  final String? field;
   final String? matchedText;
   final List<String> evidenceFactIds;
+}
+
+class FieldSuggestion {
+  const FieldSuggestion({
+    required this.suggestionId,
+    required this.noteId,
+    required this.field,
+    required this.value,
+    required this.baseFieldDigest,
+    required this.baseContentDigest,
+    this.review,
+    this.evidence = const [],
+    this.evidenceFactIds = const [],
+    this.createdAt = '',
+    this.status = SuggestionStatus.pending,
+    this.baseValue,
+  });
+
+  final String suggestionId;
+  final String noteId;
+  final EditableField field;
+  final Object value;
+  final String baseFieldDigest;
+  final String baseContentDigest;
+  final ReviewResult? review;
+  final List<String> evidence;
+  final List<String> evidenceFactIds;
+  final String createdAt;
+  final SuggestionStatus status;
+  final Object? baseValue;
+
+  List<String> get listValue => value is List<dynamic>
+      ? (value as List<dynamic>).cast<String>()
+      : const [];
+
+  String get textValue =>
+      value is String ? value as String : listValue.join(' ');
+
+  FieldSuggestion copyWith({SuggestionStatus? status, Object? baseValue}) {
+    return FieldSuggestion(
+      suggestionId: suggestionId,
+      noteId: noteId,
+      field: field,
+      value: value,
+      baseFieldDigest: baseFieldDigest,
+      baseContentDigest: baseContentDigest,
+      review: review,
+      evidence: evidence,
+      evidenceFactIds: evidenceFactIds,
+      createdAt: createdAt,
+      status: status ?? this.status,
+      baseValue: baseValue ?? this.baseValue,
+    );
+  }
+
+  factory FieldSuggestion.fromJson(Map<String, dynamic> json) {
+    final rawValue = json['value'];
+    final value = rawValue is List<dynamic>
+        ? rawValue.cast<String>()
+        : rawValue as String? ?? '';
+    return FieldSuggestion(
+      suggestionId: json['suggestion_id'] as String,
+      noteId: json['note_id'] as String,
+      field: editableFieldFromApi(json['field'] as String? ?? 'title'),
+      value: value,
+      baseFieldDigest: json['base_field_digest'] as String? ?? '',
+      baseContentDigest: json['base_content_digest'] as String? ?? '',
+      review: json['review'] is Map<String, dynamic>
+          ? ReviewResult.fromJson(json['review'] as Map<String, dynamic>)
+          : null,
+      evidence: (json['evidence'] as List<dynamic>? ?? const []).cast<String>(),
+      evidenceFactIds: (json['evidence_fact_ids'] as List<dynamic>? ?? const [])
+          .cast<String>(),
+      createdAt: json['created_at'] as String? ?? '',
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'suggestion_id': suggestionId,
+    'note_id': noteId,
+    'field': editableFieldToApi(field),
+    'value': value,
+    'base_field_digest': baseFieldDigest,
+    'base_content_digest': baseContentDigest,
+    'review': review?.toJson(),
+    'evidence': evidence,
+    'evidence_fact_ids': evidenceFactIds,
+    'created_at': createdAt,
+  };
 }
 
 class ClaimAuditItem {
@@ -160,6 +281,7 @@ class ReviewResult {
             'level': _riskLevelToApi(finding.level),
             'code': finding.code,
             'message': finding.message,
+            'field': finding.field,
             'matched_text': finding.matchedText,
             'evidence_fact_ids': finding.evidenceFactIds,
           },
@@ -579,6 +701,7 @@ List<ReviewFinding> _reviewFindingsFromJson(Object? value) {
       level: level,
       code: finding['code'] as String? ?? 'unknown',
       message: finding['message'] as String? ?? '',
+      field: finding['field'] as String?,
       matchedText: finding['matched_text'] as String?,
       evidenceFactIds:
           (finding['evidence_fact_ids'] as List<dynamic>? ?? const [])

@@ -46,6 +46,19 @@ const _styledResponseJson = {
   ],
 };
 
+const _fieldSuggestionJson = {
+  'suggestion_id': 'suggestion-1',
+  'note_id': '11111111-1111-1111-1111-111111111111',
+  'field': 'title',
+  'value': ['新的标题'],
+  'base_field_digest': 'field-digest',
+  'base_content_digest': 'content-digest',
+  'review': {'passed': true, 'findings': []},
+  'evidence': ['睡前哭闹'],
+  'evidence_fact_ids': ['source.scenario'],
+  'created_at': '2026-08-16T00:00:00Z',
+};
+
 RedBookEditorApiClient _client(
   Future<http.Response> Function(http.Request request) handler,
 ) {
@@ -283,10 +296,8 @@ void main() {
       final requests = <http.Request>[];
       final client = _client((request) async {
         requests.add(request);
-        final regenerated = Map<String, dynamic>.from(_draftJson);
-        regenerated['title_candidates'] = ['新的标题'];
         return http.Response(
-          jsonEncode(regenerated),
+          jsonEncode(_fieldSuggestionJson),
           200,
           headers: {'content-type': 'application/json'},
         );
@@ -301,8 +312,9 @@ void main() {
       expect(body['field'], 'title');
       expect(body['form'], 'experience');
       expect((body['draft'] as Map<String, dynamic>)['note_id'], draft.noteId);
-      expect(result.titleCandidates, ['新的标题']);
-      expect(result.body, '宝宝19个月时，遇到了睡前哭闹。');
+      expect(result.field, EditableField.title);
+      expect(result.listValue, ['新的标题']);
+      expect(result.evidenceFactIds, ['source.scenario']);
     });
 
     test('regenerateField can rely on the restored draft style form', () async {
@@ -310,7 +322,11 @@ void main() {
       final client = _client((request) async {
         requests.add(request);
         return http.Response(
-          jsonEncode(_draftJson),
+          jsonEncode({
+            ..._fieldSuggestionJson,
+            'field': 'body',
+            'value': '新的正文',
+          }),
           200,
           headers: {'content-type': 'application/json'},
         );
@@ -380,6 +396,104 @@ void main() {
       expect(
         (draft.toJson()['review'] as Map<String, dynamic>)['content_digest'],
         'content-digest',
+      );
+    });
+
+    test(
+      'FieldSuggestion round-trips target values and review field metadata',
+      () {
+        final suggestion = FieldSuggestion.fromJson(_fieldSuggestionJson);
+        expect(suggestion.field, EditableField.title);
+        expect(suggestion.listValue, ['新的标题']);
+        expect(suggestion.review, isNotNull);
+        expect(suggestion.toJson()['field'], 'title');
+      },
+    );
+
+    test('ReviewFinding keeps optional field metadata for legacy payloads', () {
+      final payload = Map<String, dynamic>.from(_draftJson);
+      payload['review'] = {
+        'passed': false,
+        'findings': [
+          {
+            'level': 'blocking',
+            'code': 'medication',
+            'message': '不能提供用药建议',
+            'field': 'body',
+            'matched_text': '吃什么药',
+          },
+        ],
+      };
+      final draft = NoteDraft.fromJson(payload);
+      expect(draft.review!.findings.single.field, 'body');
+      expect(draft.review!.findings.single.matchedText, '吃什么药');
+    });
+  });
+
+  group('agent recovery', () {
+    test(
+      'SSE reconnect cursor starts after the last received sequence',
+      () async {
+        final requests = <http.Request>[];
+        final client = _client((request) async {
+          requests.add(request);
+          return http.Response.bytes(
+            utf8.encode(
+              'id: 4\nevent: run.completed\ndata: ${jsonEncode({'run_id': 'run-1', 'sequence': 4, 'event_type': 'run.completed', 'phase': 'safety_review', 'label': 'completed', 'summary': '完成', 'status': 'completed', 'attempt': 1})}\n\n',
+            ),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+
+        final events = await client
+            .watchAgentRunEvents(runId: 'run-1', after: 3)
+            .toList();
+        expect(events.single.sequence, 4);
+        expect(requests.single.url.queryParameters['after'], '3');
+      },
+    );
+
+    test('resume failure never opens a failed run as an editable note', () async {
+      final runJson = {
+        'run_id': 'run-1',
+        'note_id': '11111111-1111-1111-1111-111111111111',
+        'account_id': _accountId,
+        'column_id': _columnId,
+        'operation': 'generate',
+        'form': 'experience',
+        'status': 'queued',
+        'current_phase': null,
+        'attempt': 1,
+        'cancel_requested': false,
+        'created_at': '2026-08-16T00:00:00Z',
+        'updated_at': '2026-08-16T00:00:00Z',
+      };
+      final paths = <String>[];
+      final client = _client((request) async {
+        paths.add(request.url.path);
+        if (request.url.path.endsWith('/resume')) {
+          return http.Response(jsonEncode(runJson), 202);
+        }
+        if (request.url.path.endsWith('/events')) {
+          return http.Response.bytes(
+            utf8.encode(
+              'id: 1\nevent: run.failed\ndata: ${jsonEncode({'run_id': 'run-1', 'sequence': 1, 'event_type': 'run.failed', 'phase': 'model', 'label': 'failed', 'summary': '失败', 'status': 'failed', 'attempt': 1})}\n\n',
+            ),
+            200,
+          );
+        }
+        return http.Response(jsonEncode({...runJson, 'status': 'failed'}), 200);
+      });
+
+      await expectLater(
+        client.resumeAgentRunWithProgress(runId: 'run-1'),
+        throwsA(isA<ApiRequestException>()),
+      );
+      expect(paths, contains('/api/v1/agent-runs/run-1/resume'));
+      expect(
+        paths,
+        isNot(contains('/api/v1/notes/11111111-1111-1111-1111-111111111111')),
       );
     });
   });

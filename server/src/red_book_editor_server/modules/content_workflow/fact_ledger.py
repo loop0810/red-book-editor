@@ -7,6 +7,7 @@ import re
 from red_book_editor_server.domain.contracts import (
     ClaimAuditItemDto,
     ClaimSupport,
+    EditableField,
     FactKind,
     FactLedgerDto,
     NoteDraftDto,
@@ -99,6 +100,20 @@ def content_digest(draft: NoteDraftDto) -> str:
         "style_form": draft.style_form.value if draft.style_form else None,
     }
     return _digest(payload)
+
+
+def field_value(draft: NoteDraftDto, field: EditableField) -> str | list[str]:
+    if field is EditableField.TITLE:
+        return draft.title_candidates
+    if field is EditableField.BODY:
+        return draft.body
+    if field is EditableField.HASHTAGS:
+        return draft.hashtags
+    return draft.cover_copy
+
+
+def field_digest(draft: NoteDraftDto, field: EditableField) -> str:
+    return _digest(field_value(draft, field))
 
 
 def audit_claims(draft: NoteDraftDto, ledger: FactLedgerDto) -> list[ClaimAuditItemDto]:

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from red_book_editor_server.app.config import get_settings
 from red_book_editor_server.app.dependencies import build_model_gateway, database_session
 from red_book_editor_server.domain.contracts import (
+    FieldSuggestionDto,
     NoteDraftDto,
     SourceExperienceDto,
     StyledNoteResponseDto,
@@ -96,8 +97,8 @@ async def restyle_note(request: RestyleNoteRequest) -> StyledNoteResponseDto:
     return result.as_response()
 
 
-@router.post("/regenerate-field", response_model=NoteDraftDto)
-async def regenerate_field(request: RegenerateFieldRequest) -> NoteDraftDto:
+@router.post("/regenerate-field", response_model=FieldSuggestionDto)
+async def regenerate_field(request: RegenerateFieldRequest) -> FieldSuggestionDto:
     settings = get_settings()
     service = _build_service(settings)
     try:
@@ -111,7 +112,7 @@ async def regenerate_field(request: RegenerateFieldRequest) -> NoteDraftDto:
             status_code=status.HTTP_409_CONFLICT,
             detail="style_form_required",
         ) from error
-    except ContentGenerationError as error:
+    except (ContentGenerationError, ModelGatewayError) as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="content_generation_failed",

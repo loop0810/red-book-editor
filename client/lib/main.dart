@@ -126,6 +126,13 @@ class WorkbenchHomePage extends ConsumerWidget {
                                 onEvent: onEvent,
                                 onRunCreated: onRunCreated,
                               ),
+                      resumeAgentRun: (runId, {onEvent, onRunCreated}) => ref
+                          .read(apiClientProvider)
+                          .resumeAgentRunWithProgress(
+                            runId: runId,
+                            onEvent: onEvent,
+                            onRunCreated: onRunCreated,
+                          ),
                       cancelAgentRun: (runId) => ref
                           .read(apiClientProvider)
                           .cancelAgentRun(runId: runId),
@@ -142,6 +149,7 @@ class WorkbenchHomePage extends ConsumerWidget {
                           MaterialPageRoute(
                             builder: (_) => NoteEditorPage(
                               draft: response.draft,
+                              aiBaseline: response.draft,
                               agentTrace: response.agentTrace,
                               styleForm: selectedForm,
                               onRegenerateField: (current, field, {form}) => ref

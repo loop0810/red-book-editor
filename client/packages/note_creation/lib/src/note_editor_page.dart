@@ -15,6 +15,7 @@ class NoteEditorPage extends StatefulWidget {
     this.loadVersions,
     this.agentTrace = const [],
     this.styleForm,
+    this.aiBaseline,
     super.key,
   });
 
@@ -25,6 +26,9 @@ class NoteEditorPage extends StatefulWidget {
   final LoadVersions? loadVersions;
   final List<AgentTraceStep> agentTrace;
   final StyleForm? styleForm;
+
+  /// A newly generated note has a reliable AI baseline. Reopened drafts may not.
+  final NoteDraft? aiBaseline;
 
   @override
   State<NoteEditorPage> createState() => _NoteEditorPageState();
@@ -47,14 +51,28 @@ class _LocalVersion {
 }
 
 class _NoteEditorPageState extends State<NoteEditorPage> {
-  late NoteDraft _draft;
+  late EditorSessionState _session;
   late final TextEditingController _titleController;
   late final TextEditingController _bodyController;
   late final TextEditingController _hashtagsController;
   late final TextEditingController _coverController;
+  final _fieldKeys = <EditableField, GlobalKey>{
+    EditableField.title: GlobalKey(),
+    EditableField.body: GlobalKey(),
+    EditableField.hashtags: GlobalKey(),
+    EditableField.coverCopy: GlobalKey(),
+  };
+  final _fieldFocusNodes = <EditableField, FocusNode>{
+    EditableField.title: FocusNode(),
+    EditableField.body: FocusNode(),
+    EditableField.hashtags: FocusNode(),
+    EditableField.coverCopy: FocusNode(),
+  };
   final _localVersions = <_LocalVersion>[];
   bool _saving = false;
   String? _regeneratingField;
+
+  NoteDraft get _draft => _session.draft;
 
   bool get _hasBlockingReview => _draft.reviewFindings.any(
     // blocking 风险只影响“是否允许继续导出/发布”，不等于页面不能继续编辑。
@@ -68,7 +86,11 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     super.initState();
     // Controller 是输入框的临时 UI 状态，_draft 是跨请求的数据快照。
     // 编辑时先改 Controller，保存/重生成时再通过 _draftFromFields 合并回模型。
-    _draft = widget.draft;
+    final baseline = widget.aiBaseline;
+    _session = EditorSessionState(
+      draft: widget.draft,
+      aiBaseline: baseline == null ? const {} : _baselineValues(baseline),
+    );
     _titleController = TextEditingController(
       text: _draft.titleCandidates.isEmpty
           ? _draft.source.scenario
@@ -79,6 +101,9 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
       text: _draft.hashtags.join(' '),
     );
     _coverController = TextEditingController(text: _draft.coverCopy);
+    if (baseline == null && widget.loadVersions != null) {
+      _loadSavedBaseline();
+    }
   }
 
   @override
@@ -87,12 +112,58 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     _bodyController.dispose();
     _hashtagsController.dispose();
     _coverController.dispose();
+    for (final node in _fieldFocusNodes.values) {
+      node.dispose();
+    }
     super.dispose();
+  }
+
+  Map<EditableField, Object> _baselineValues(NoteDraft draft) => {
+    for (final field in EditableField.values)
+      field: fieldValueForDraft(draft, field),
+  };
+
+  Future<void> _loadSavedBaseline() async {
+    try {
+      final versions = await widget.loadVersions!(_draft.noteId);
+      if (!mounted || versions.isEmpty) return;
+      final earliest = versions.reduce(
+        (left, right) => left.version <= right.version ? left : right,
+      );
+      final baseline = _draft.copyWith(
+        titleCandidates: earliest.titleCandidates,
+        body: earliest.body,
+        hashtags: earliest.hashtags,
+        coverCopy: earliest.coverCopy,
+        styleForm: earliest.styleForm ?? _draft.styleForm,
+      );
+      setState(() {
+        _session = EditorSessionState(
+          draft: _session.draft,
+          aiBaseline: _baselineValues(baseline),
+          pendingSuggestions: _session.pendingSuggestions,
+        );
+      });
+    } catch (_) {
+      // 没有可靠的历史基线时隐藏用户编辑 Diff，但不影响正常编辑。
+    }
+  }
+
+  EditorSessionState _sessionWithControllers() {
+    return EditorSessionState(
+      draft: _draftFromFields(),
+      aiBaseline: _session.aiBaseline,
+      pendingSuggestions: _session.pendingSuggestions,
+    );
+  }
+
+  void _syncControllersToSession() {
+    _session = _sessionWithControllers();
   }
 
   NoteDraft _draftFromFields() {
     // 把用户当前正在编辑的文本重新组装成请求对象，避免保存旧的 _draft 快照。
-    return _draft.copyWith(
+    return _session.draft.copyWith(
       titleCandidates: [_titleController.text.trim()],
       body: _bodyController.text.trim(),
       hashtags: _hashtagsController.text
@@ -105,7 +176,11 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
 
   void _applyDraft(NoteDraft draft) {
     // 服务端返回新 draft 后，同时更新数据对象和四个 Controller，保持 UI 与模型一致。
-    _draft = draft;
+    _session = EditorSessionState(
+      draft: draft,
+      aiBaseline: _session.aiBaseline,
+      pendingSuggestions: _session.pendingSuggestions,
+    );
     _titleController.text = draft.titleCandidates.isEmpty
         ? draft.source.scenario
         : draft.titleCandidates.first;
@@ -129,6 +204,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
 
   Future<void> _save() async {
     // 没有注入服务端保存函数时，退化为本机版本快照；有函数时才 PUT 到服务端。
+    _syncControllersToSession();
     if (widget.onSaveDraft == null) {
       setState(_recordLocalVersion);
       _showSnackBar('已保存到本机草稿');
@@ -151,29 +227,94 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   }
 
   Future<void> _regenerate(String field) async {
-    // 局部重生成只把 field 交给服务端；返回完整 NoteDraft 后由服务端/客户端保证
-    // 未选择的字段不被覆盖。
+    // 局部重生成返回独立候选；候选到达后不自动写入 Controller。
     final onRegenerate = widget.onRegenerateField;
     if (onRegenerate == null) {
       _showSnackBar('当前未接入局部重新生成');
       return;
     }
-    setState(() => _regeneratingField = field);
+    final currentSession = _sessionWithControllers();
+    final editableField = editableFieldFromApi(field);
+    final baseValue = fieldValueForDraft(currentSession.draft, editableField);
+    setState(() {
+      _session = currentSession;
+      _regeneratingField = field;
+    });
     try {
-      final regenerated = await onRegenerate(
-        _draftFromFields(),
+      final suggestion = await onRegenerate(
+        currentSession.draft,
         field,
         // 草稿列表重新打开时没有额外的页面参数，优先恢复服务端保存的表达形式。
         form: widget.styleForm ?? _draft.styleForm,
       );
       if (!mounted) return;
-      setState(() => _applyDraft(regenerated));
-      _showSnackBar('已重新生成${_fieldLabel(field)}');
+      setState(() {
+        _session = _session.addSuggestion(suggestion, baseValue: baseValue);
+      });
+      _showSnackBar('已生成${_fieldLabel(field)}候选，请确认后采纳');
     } catch (error) {
       if (mounted) _showSnackBar('重新生成失败：$error');
     } finally {
       if (mounted) setState(() => _regeneratingField = null);
     }
+  }
+
+  Future<void> _acceptSuggestion(EditableField field) async {
+    final current = _sessionWithControllers();
+    final suggestion = current.suggestionFor(field);
+    if (suggestion == null) return;
+    if (current.hasConflict(suggestion)) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('${_fieldLabel(editableFieldToApi(field))}已被修改'),
+          content: const Text('AI 建议基于较早内容生成。请选择如何处理，不会自动覆盖你的修改。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'keep'),
+              child: const Text('保留当前内容'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(context, 'use'),
+              child: const Text('使用 AI 候选'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || choice == null) return;
+      if (choice == 'keep') {
+        setState(() {
+          _session = current.rejectSuggestion(suggestion);
+        });
+        return;
+      }
+      setState(() {
+        _session = current.acceptSuggestion(suggestion, force: true);
+        _writeDraftToControllers(_session.draft);
+      });
+      return;
+    }
+    setState(() {
+      _session = current.acceptSuggestion(suggestion);
+      _writeDraftToControllers(_session.draft);
+    });
+  }
+
+  void _rejectSuggestion(EditableField field) {
+    final suggestion = _session.suggestionFor(field);
+    if (suggestion == null) return;
+    setState(() {
+      _session = _sessionWithControllers().rejectSuggestion(suggestion);
+    });
+  }
+
+  void _writeDraftToControllers(NoteDraft draft) {
+    _titleController.text = draft.titleCandidates.isEmpty
+        ? draft.source.scenario
+        : draft.titleCandidates.first;
+    _bodyController.text = draft.body;
+    _hashtagsController.text = draft.hashtags.join(' ');
+    _coverController.text = draft.coverCopy;
   }
 
   String _fieldLabel(String field) {
@@ -189,6 +330,114 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
       default:
         return field;
     }
+  }
+
+  void _focusFinding(String? field) {
+    if (field == null) return;
+    final editableField = editableFieldFromApi(field);
+    _fieldFocusNodes[editableField]?.requestFocus();
+    final target = _fieldKeys[editableField]?.currentContext;
+    if (target != null) {
+      Scrollable.ensureVisible(
+        target,
+        duration: const Duration(milliseconds: 240),
+      );
+    }
+  }
+
+  Widget _diffText(FieldDiff diff) {
+    return Wrap(
+      children: [
+        for (final segment in diff.segments)
+          Text(
+            segment.text,
+            style: TextStyle(
+              color: switch (segment.kind) {
+                DiffSegmentKind.added => Colors.green.shade800,
+                DiffSegmentKind.removed => Colors.red.shade800,
+                DiffSegmentKind.unchanged => null,
+              },
+              decoration: segment.kind == DiffSegmentKind.removed
+                  ? TextDecoration.lineThrough
+                  : null,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _baselineDiff(EditableField field) {
+    final baseline = _session.aiBaseline[field];
+    if (baseline == null) return const SizedBox.shrink();
+    final current = fieldValueForDraft(_session.draft, field);
+    final diff = diffFieldValues(
+      field: field,
+      before: baseline,
+      after: current,
+    );
+    if (!diff.hasChanges) return const SizedBox.shrink();
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: ExpansionTile(
+        leading: const Icon(Icons.edit_note),
+        title: const Text('查看 AI 初稿与当前编辑 Diff'),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        children: [_diffText(diff)],
+      ),
+    );
+  }
+
+  Widget _suggestionPanel(EditableField field) {
+    final suggestion = _session.suggestionFor(field);
+    if (suggestion == null) return const SizedBox.shrink();
+    final current = fieldValueForDraft(_session.draft, field);
+    final diff = diffFieldValues(
+      field: field,
+      before: current,
+      after: suggestion.value,
+    );
+    final review = suggestion.review;
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('AI ${_fieldLabel(editableFieldToApi(field))}候选'),
+            const SizedBox(height: 6),
+            Text('当前内容 → AI 建议'),
+            _diffText(diff),
+            if (suggestion.evidence.isNotEmpty ||
+                suggestion.evidenceFactIds.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                '来源证据：${[...suggestion.evidence, ...suggestion.evidenceFactIds].join('、')}',
+              ),
+            ],
+            if (review != null && !review.passed) ...[
+              const SizedBox(height: 8),
+              Text('候选需要复核：${review.findings.length} 项'),
+            ],
+            Row(
+              children: [
+                FilledButton(
+                  onPressed: () => _acceptSuggestion(field),
+                  child: const Text('采纳'),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () => _rejectSuggestion(field),
+                  child: const Text('拒绝'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _showVersions() async {
@@ -251,6 +500,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
                     _bodyController.text = local.body;
                     _hashtagsController.text = local.hashtags;
                     _coverController.text = local.coverCopy;
+                    _syncControllersToSession();
                     Navigator.of(context).pop();
                     _showSnackBar('已恢复 ${local.label}，保存后生效');
                   },
@@ -264,7 +514,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
 
   void _restoreServerVersion(NoteDraftVersion version) {
     setState(() {
-      _draft = _draft.copyWith(
+      final restored = _draft.copyWith(
         titleCandidates: version.titleCandidates.isEmpty
             ? _draft.titleCandidates
             : version.titleCandidates,
@@ -273,12 +523,17 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
         coverCopy: version.coverCopy,
         styleForm: version.styleForm ?? _draft.styleForm,
       );
-      _titleController.text = version.titleCandidates.isEmpty
-          ? _draft.source.scenario
-          : version.titleCandidates.first;
-      _bodyController.text = version.body;
-      _hashtagsController.text = version.hashtags.join(' ');
-      _coverController.text = version.coverCopy;
+      _session = EditorSessionState(
+        draft: restored,
+        aiBaseline: _session.aiBaseline,
+        pendingSuggestions: _session.pendingSuggestions
+            .map(
+              (suggestion) =>
+                  suggestion.copyWith(status: SuggestionStatus.stale),
+            )
+            .toList(),
+      );
+      _writeDraftToControllers(restored);
     });
     _showSnackBar('已恢复 v${version.version}，保存后生效');
   }
@@ -423,10 +678,15 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
                 ],
               ),
             ),
-          TextField(
-            controller: _titleController,
-            decoration: const InputDecoration(labelText: '标题'),
-            maxLines: 2,
+          Container(
+            key: _fieldKeys[EditableField.title],
+            child: TextField(
+              controller: _titleController,
+              focusNode: _fieldFocusNodes[EditableField.title],
+              onChanged: (_) => setState(_syncControllersToSession),
+              decoration: const InputDecoration(labelText: '标题'),
+              maxLines: 2,
+            ),
           ),
           Row(
             children: [
@@ -438,12 +698,19 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
               _regenerateButton('title', '重新生成标题'),
             ],
           ),
+          _baselineDiff(EditableField.title),
+          _suggestionPanel(EditableField.title),
           const Divider(),
-          TextField(
-            controller: _bodyController,
-            decoration: const InputDecoration(labelText: '正文'),
-            minLines: 5,
-            maxLines: 12,
+          Container(
+            key: _fieldKeys[EditableField.body],
+            child: TextField(
+              controller: _bodyController,
+              focusNode: _fieldFocusNodes[EditableField.body],
+              onChanged: (_) => setState(_syncControllersToSession),
+              decoration: const InputDecoration(labelText: '正文'),
+              minLines: 5,
+              maxLines: 12,
+            ),
           ),
           Row(
             children: [
@@ -455,10 +722,17 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
               _regenerateButton('body', '重新生成正文'),
             ],
           ),
+          _baselineDiff(EditableField.body),
+          _suggestionPanel(EditableField.body),
           const Divider(),
-          TextField(
-            controller: _hashtagsController,
-            decoration: const InputDecoration(labelText: '话题'),
+          Container(
+            key: _fieldKeys[EditableField.hashtags],
+            child: TextField(
+              controller: _hashtagsController,
+              focusNode: _fieldFocusNodes[EditableField.hashtags],
+              onChanged: (_) => setState(_syncControllersToSession),
+              decoration: const InputDecoration(labelText: '话题'),
+            ),
           ),
           Row(
             children: [
@@ -470,12 +744,21 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
               _regenerateButton('hashtags', '重新生成话题'),
             ],
           ),
+          _baselineDiff(EditableField.hashtags),
+          _suggestionPanel(EditableField.hashtags),
           const Divider(),
-          TextField(
-            controller: _coverController,
-            decoration: const InputDecoration(labelText: '封面文案'),
+          Container(
+            key: _fieldKeys[EditableField.coverCopy],
+            child: TextField(
+              controller: _coverController,
+              focusNode: _fieldFocusNodes[EditableField.coverCopy],
+              onChanged: (_) => setState(_syncControllersToSession),
+              decoration: const InputDecoration(labelText: '封面文案'),
+            ),
           ),
           _regenerateButton('cover_copy', '重新生成封面文案'),
+          _baselineDiff(EditableField.coverCopy),
+          _suggestionPanel(EditableField.coverCopy),
           if (_draft.imageSuggestions.isNotEmpty)
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -495,6 +778,9 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
                 subtitle: finding.matchedText == null
                     ? null
                     : Text('命中：${finding.matchedText}'),
+                onTap: finding.field == null
+                    ? null
+                    : () => _focusFinding(finding.field),
               ),
             ),
           if (_draft.review != null)

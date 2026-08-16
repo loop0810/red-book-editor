@@ -33,7 +33,7 @@
 - **THEN** 系统保留用户输入，明确提示生成失败，并允许用户重试而不丢失经历或产生可导出的伪成功草稿
 
 ### Requirement: Edit and regenerate selectively
-系统 SHALL 允许用户直接编辑笔记字段，并针对标题、正文、话题或封面文案单独重新生成，不得覆盖用户未选择修改的字段；草稿保存和恢复必须保留原先选择的表达形式。
+系统 SHALL 允许用户直接编辑笔记字段，并针对标题、正文、话题或封面文案单独请求一个不自动覆盖当前草稿的 AI 候选；草稿保存和恢复必须保留原先选择的表达形式。
 
 #### Scenario: Edit one field
 - **WHEN** 用户修改正文后保存
@@ -41,7 +41,17 @@
 
 #### Scenario: Regenerate selected field
 - **WHEN** 用户请求重新生成标题
-- **THEN** 系统只更新标题候选或当前标题，正文、话题、封面文案、来源事实和表达形式保持不变
+- **THEN** 系统只返回标题 `FieldSuggestion`，正文、话题、封面文案、来源事实、当前用户编辑和表达形式保持不变
+
+#### Scenario: Accept a field suggestion
+
+- **WHEN** 用户明确采纳一个没有基础冲突的字段候选
+- **THEN** 系统只将候选值合并到目标字段，其他字段保持不变，并在保存时重新执行完整草稿审核
+
+#### Scenario: Recover a failed generation
+
+- **WHEN** 异步生成失败、取消或连接中断
+- **THEN** 系统保留 `run_id` 和 `SourceExperience`，允许用户继续运行或重新生成；失败运行不得作为成功草稿打开
 
 #### Scenario: Recover selected style form
 - **WHEN** 用户重新打开一个已保存的草稿并请求字段重生成且未另行选择表达形式

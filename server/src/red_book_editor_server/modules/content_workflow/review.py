@@ -65,15 +65,14 @@ class DeterministicContentReviewer:
     """执行不依赖模型的第一层内容和领域风险检查。"""
 
     def review(self, draft: NoteDraftDto) -> ReviewResultDto:
-        text = _draft_text(draft)
         findings: list[ReviewFindingDto] = []
-        findings.extend(self._find(text, _DIAGNOSIS_PATTERNS, "diagnosis", "内容不能进行疾病判断"))
+        findings.extend(self._find(draft, _DIAGNOSIS_PATTERNS, "diagnosis", "内容不能进行疾病判断"))
         findings.extend(
-            self._find(text, _MEDICATION_PATTERNS, "medication", "内容不能提供用药建议")
+            self._find(draft, _MEDICATION_PATTERNS, "medication", "内容不能提供用药建议")
         )
         findings.extend(
             self._find(
-                text,
+                draft,
                 _GUARANTEE_PATTERNS,
                 "guarantee",
                 "请删除保证性或绝对化效果表达",
@@ -82,17 +81,17 @@ class DeterministicContentReviewer:
         )
         findings.extend(
             self._find(
-                text,
+                draft,
                 _MEDICAL_CONTEXT_PATTERNS,
                 "medical_context",
                 "医疗相关经历需要人工复核，不能扩展为普遍建议",
                 RiskLevel.WARNING,
             )
         )
-        findings.extend(self._sleep_findings(text))
+        findings.extend(self._sleep_findings(draft))
         findings.extend(
             self._find(
-                text,
+                draft,
                 _PRODUCT_SAFETY_PATTERNS,
                 "product_safety_claim",
                 "不能保证产品绝对安全、适合所有宝宝或促进发育",
@@ -100,7 +99,7 @@ class DeterministicContentReviewer:
         )
         findings.extend(
             self._find(
-                text,
+                draft,
                 _EXTERNAL_BACKING_PATTERNS,
                 "external_backing",
                 "不能伪造研究、医生或专家背书",
@@ -108,7 +107,7 @@ class DeterministicContentReviewer:
         )
         findings.extend(
             self._find(
-                text,
+                draft,
                 _FABRICATED_DETAIL_PATTERNS,
                 "fabricated_detail",
                 "请删除来源经历中没有提供的活动细节",
@@ -117,52 +116,63 @@ class DeterministicContentReviewer:
         passed = not any(finding.level is RiskLevel.BLOCKING for finding in findings)
         return ReviewResultDto(passed=passed, findings=findings)
 
-    def _sleep_findings(self, text: str) -> list[ReviewFindingDto]:
-        match = _first_match(text, _SLEEP_RECOUNT_PATTERNS)
-        if match is None:
-            return []
-        level = (
-            RiskLevel.BLOCKING
-            if _first_match(text, _SLEEP_RECOMMENDATION_PATTERNS)
-            else RiskLevel.WARNING
-        )
-        message = (
-            "不能把让宝宝趴在成人身上睡觉包装成可复制的安全方法"
-            if level is RiskLevel.BLOCKING
-            else "涉及成人接触睡眠方式，请人工确认睡眠安全边界"
-        )
-        return [
-            ReviewFindingDto(
-                level=level,
-                code="sleep_safety",
-                message=message,
-                matched_text=match,
+    def _sleep_findings(self, draft: NoteDraftDto) -> list[ReviewFindingDto]:
+        for field, text in _draft_text_fields(draft):
+            match = _first_match(text, _SLEEP_RECOUNT_PATTERNS)
+            if match is None:
+                continue
+            level = (
+                RiskLevel.BLOCKING
+                if _first_match(text, _SLEEP_RECOMMENDATION_PATTERNS)
+                else RiskLevel.WARNING
             )
-        ]
+            message = (
+                "不能把让宝宝趴在成人身上睡觉包装成可复制的安全方法"
+                if level is RiskLevel.BLOCKING
+                else "涉及成人接触睡眠方式，请人工确认睡眠安全边界"
+            )
+            return [
+                ReviewFindingDto(
+                    level=level,
+                    code="sleep_safety",
+                    message=message,
+                    field=field,
+                    matched_text=match,
+                )
+            ]
+        return []
 
     def _find(
         self,
-        text: str,
+        draft: NoteDraftDto,
         patterns: tuple[str, ...],
         code: str,
         message: str,
         level: RiskLevel = RiskLevel.BLOCKING,
     ) -> list[ReviewFindingDto]:
-        match = _first_match(text, patterns)
-        if match is None:
-            return []
-        return [ReviewFindingDto(level=level, code=code, message=message, matched_text=match)]
+        for field, text in _draft_text_fields(draft):
+            match = _first_match(text, patterns)
+            if match is not None:
+                return [
+                    ReviewFindingDto(
+                        level=level,
+                        code=code,
+                        message=message,
+                        field=field,
+                        matched_text=match,
+                    )
+                ]
+        return []
 
 
 class ModelAssistedContentReviewer:
     """保留模型辅助审核接口；当前使用确定性规则作为可重复回退实现。"""
 
     async def review(self, draft: NoteDraftDto) -> ReviewResultDto:
-        text = _draft_text(draft)
         findings: list[ReviewFindingDto] = []
         findings.extend(
             self._find(
-                text,
+                draft,
                 _ACCOUNT_SCOPE_PATTERNS,
                 "account_scope",
                 "内容偏离0-2岁育儿账号定位, 请确认或调整主题",
@@ -171,7 +181,7 @@ class ModelAssistedContentReviewer:
         )
         findings.extend(
             self._find(
-                text,
+                draft,
                 (*_EXTERNAL_BACKING_PATTERNS, *_FABRICATED_DETAIL_PATTERNS),
                 "unsupported_claim",
                 "请删除来源经历中不存在的结论、结果、细节或外部背书",
@@ -179,7 +189,7 @@ class ModelAssistedContentReviewer:
         )
         findings.extend(
             self._find(
-                text,
+                draft,
                 _ANXIETY_PATTERNS,
                 "anxiety_language",
                 "请避免制造焦虑的表达, 改用平静的描述",
@@ -191,16 +201,25 @@ class ModelAssistedContentReviewer:
 
     def _find(
         self,
-        text: str,
+        draft: NoteDraftDto,
         patterns: tuple[str, ...],
         code: str,
         message: str,
         level: RiskLevel = RiskLevel.BLOCKING,
     ) -> list[ReviewFindingDto]:
-        match = _first_match(text, patterns)
-        if match is None:
-            return []
-        return [ReviewFindingDto(level=level, code=code, message=message, matched_text=match)]
+        for field, text in _draft_text_fields(draft):
+            match = _first_match(text, patterns)
+            if match is not None:
+                return [
+                    ReviewFindingDto(
+                        level=level,
+                        code=code,
+                        message=message,
+                        field=field,
+                        matched_text=match,
+                    )
+                ]
+        return []
 
 
 async def review_draft(draft: NoteDraftDto) -> ReviewResultDto:
@@ -212,7 +231,7 @@ async def review_draft(draft: NoteDraftDto) -> ReviewResultDto:
     model_assisted = await ModelAssistedContentReviewer().review(draft)
     claim_findings = _claim_findings(claim_audit)
     findings_by_key = {
-        (finding.code, finding.matched_text): finding
+        (finding.code, finding.field, finding.matched_text): finding
         for finding in [*deterministic.findings, *model_assisted.findings, *claim_findings]
     }
     findings = list(findings_by_key.values())
@@ -284,6 +303,7 @@ def _claim_findings(claim_audit: list[ClaimAuditItemDto]) -> list[ReviewFindingD
                 level=risk,
                 code=code,
                 message=message,
+                field=_normalize_field(item.field),
                 matched_text=item.claim,
                 evidence_fact_ids=item.evidence_fact_ids,
             )
@@ -319,9 +339,25 @@ def _has_audit_metadata(review: ReviewResultDto) -> bool:
 
 
 def _draft_text(draft: NoteDraftDto) -> str:
-    return "\n".join(
-        [draft.topic_angle, *draft.title_candidates, draft.body, *draft.hashtags, draft.cover_copy]
-    )
+    return "\n".join(text for _, text in _draft_text_fields(draft))
+
+
+def _draft_text_fields(draft: NoteDraftDto) -> list[tuple[str, str]]:
+    return [
+        ("topic_angle", draft.topic_angle),
+        ("title", "\n".join(draft.title_candidates)),
+        ("body", draft.body),
+        ("hashtags", " ".join(draft.hashtags)),
+        ("cover_copy", draft.cover_copy),
+    ]
+
+
+def _normalize_field(field: str) -> str:
+    if field.startswith("title_candidates"):
+        return "title"
+    if field.startswith("hashtags"):
+        return "hashtags"
+    return field
 
 
 def _first_match(text: str, patterns: tuple[str, ...]) -> str | None:

@@ -13,6 +13,7 @@ class NoteCreationPage extends StatefulWidget {
   const NoteCreationPage({
     required this.generate,
     this.generateWithProgress,
+    this.resumeAgentRun,
     this.cancelAgentRun,
     this.uploadAsset,
     this.onDraftGenerated,
@@ -21,6 +22,7 @@ class NoteCreationPage extends StatefulWidget {
 
   final GenerateNote generate;
   final GenerateNoteWithProgress? generateWithProgress;
+  final ResumeAgentRun? resumeAgentRun;
   final CancelAgentRun? cancelAgentRun;
   final UploadAsset? uploadAsset;
   final Future<void> Function(StyledNoteResponse response, StyleForm form)?
@@ -45,6 +47,8 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
   String? _activeRunId;
   String? _agentPhase;
   String? _agentSummary;
+  String? _failedRunId;
+  StyleForm? _lastForm;
   final _draftStore = SourceExperienceDraftStore();
 
   @override
@@ -104,6 +108,7 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
       _loading = true;
       _error = null;
     });
+    String? runIdForRecovery;
     try {
       final assetIds = <String>[];
       for (final path in _pickedPaths) {
@@ -125,6 +130,8 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
         notes: _notesController.text.trim(),
         assetIds: assetIds,
       );
+      _lastForm = _selectedForm;
+      _failedRunId = null;
       await _draftStore.save(source);
       // generate 是依赖注入进来的 Future：测试时可以替换成 fake，生产时由 API Client 实现。
       final response = widget.generateWithProgress == null
@@ -134,8 +141,9 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
               _selectedForm,
               onRunCreated: (run) {
                 if (!mounted) return;
+                runIdForRecovery = run.runId;
+                _activeRunId = run.runId;
                 setState(() {
-                  _activeRunId = run.runId;
                   _agentPhase = run.currentPhase;
                 });
               },
@@ -147,26 +155,84 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
                 });
               },
             );
-      _activeRunId = null;
       await _draftStore.clear();
-      // 只有服务端生成成功才进入编辑器；response 同时携带 draft 和 agentTrace。
-      if (mounted) {
-        if (widget.onDraftGenerated != null) {
-          await widget.onDraftGenerated!(response, _selectedForm);
-        } else {
-          await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => NoteEditorPage(
-                draft: response.draft,
-                agentTrace: response.agentTrace,
-                styleForm: _selectedForm,
-              ),
-            ),
-          );
-        }
-      }
+      _failedRunId = null;
+      await _openGeneratedNote(response, _selectedForm);
     } catch (error) {
       if (mounted) setState(() => _error = '生成失败：$error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _failedRunId ??= runIdForRecovery ?? _activeRunId;
+          _activeRunId = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _openGeneratedNote(
+    StyledNoteResponse response,
+    StyleForm form,
+  ) async {
+    // 只有服务端生成成功才进入编辑器；response 同时携带 draft 和 agentTrace。
+    if (!mounted) return;
+    if (widget.onDraftGenerated != null) {
+      await widget.onDraftGenerated!(response, form);
+    } else {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => NoteEditorPage(
+            draft: response.draft,
+            aiBaseline: response.draft,
+            agentTrace: response.agentTrace,
+            styleForm: form,
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _resumeGeneration() async {
+    final runId = _failedRunId;
+    final resume = widget.resumeAgentRun;
+    if (runId == null || resume == null) {
+      _showRecoveryMessage('当前无法继续运行，请点击重新生成');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+      _failedRunId = null;
+    });
+    try {
+      final response = await resume(
+        runId,
+        onRunCreated: (run) {
+          if (!mounted) return;
+          _activeRunId = run.runId;
+          setState(() {
+            _agentPhase = run.currentPhase;
+          });
+        },
+        onEvent: (event) {
+          if (!mounted) return;
+          setState(() {
+            _agentPhase = event.phase;
+            _agentSummary = event.summary;
+          });
+        },
+      );
+      await _draftStore.clear();
+      _failedRunId = null;
+      await _openGeneratedNote(response, _lastForm ?? _selectedForm);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = '继续运行失败：$error';
+          _failedRunId = runId;
+        });
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -175,6 +241,10 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
         });
       }
     }
+  }
+
+  void _showRecoveryMessage(String message) {
+    if (mounted) setState(() => _error = message);
   }
 
   Future<void> _cancelGeneration() async {
@@ -317,6 +387,30 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
                 : const Icon(Icons.auto_awesome),
             label: Text(_loading ? '生成中…' : '生成笔记'),
           ),
+          if (!_loading && _failedRunId != null) ...[
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.restart_alt),
+                title: const Text('这次生成没有完成'),
+                subtitle: const Text('可以继续原来的运行，或重新开始一次生成。'),
+                trailing: Wrap(
+                  spacing: 4,
+                  children: [
+                    if (widget.resumeAgentRun != null)
+                      TextButton(
+                        onPressed: _resumeGeneration,
+                        child: const Text('继续运行'),
+                      ),
+                    TextButton(
+                      onPressed: _loading ? null : _generate,
+                      child: const Text('重新生成'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           if (_loading && widget.generateWithProgress != null) ...[
             const SizedBox(height: 12),
             Text(

@@ -22,7 +22,7 @@
 
 ### Requirement: Audit generated claims against the source ledger
 
-系统 SHALL 对标题、选题角度、正文、话题和封面文案中的关键声明执行来源审计，并为每条声明标记 `supported`、`uncertain` 或 `unsupported`，同时提供来源证据或命中文本；无法从事实账本得到支持的声明不得被标记为 `supported`。
+系统 SHALL 对标题、选题角度、正文、话题和封面文案中的关键声明执行来源审计，并为每条声明标记 `supported`、`uncertain` 或 `unsupported`，同时提供来源证据、字段标识或命中文本；无法从事实账本得到支持的声明不得被标记为 `supported`。
 
 #### Scenario: Supported claim
 
@@ -48,6 +48,11 @@
 - **WHEN** 主生成、整篇重写或字段重生成完成
 - **THEN** API 返回包含声明支持状态、来源证据和风险级别的结构化审核快照
 
+#### Scenario: Return field-scoped suggestion evidence
+
+- **WHEN** 用户请求局部字段候选
+- **THEN** 服务端在内存中用完整候选草稿执行审核，但响应只返回目标字段候选、该字段相关的审核结果、来源证据和命中文本，不返回其他字段的候选替换
+
 #### Scenario: Recover an audited draft
 
 - **WHEN** 用户重新打开已有草稿或历史版本
@@ -57,3 +62,5 @@
 
 - **WHEN** 用户修改任意生成字段后保存
 - **THEN** 系统针对保存后的完整草稿重新建立声明审计，并使用新的结果计算草稿状态
+
+审核发现的 `field` 为规范化的 `title`、`body`、`hashtags` 或 `cover_copy`；旧审核结果缺少该字段时客户端必须兼容读取，并在下一次生成或保存时重新审核。客户端只定位到字段和 `matched_text`，不承诺字符级偏移。

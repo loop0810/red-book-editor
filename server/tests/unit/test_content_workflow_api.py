@@ -108,15 +108,39 @@ def test_restyle_note_returns_draft_and_trace(client: TestClient) -> None:
 
 def test_regenerate_field_preserves_other_fields(client: TestClient) -> None:
     draft = _draft_payload()
-    old_body = draft["body"]
     regenerated = client.post(
         "/api/v1/notes/regenerate-field",
         json={"draft": draft, "field": "title"},
     )
     assert regenerated.status_code == 200
-    assert regenerated.json()["body"] == old_body
-    assert regenerated.json()["status"] == "needs_review"
-    assert regenerated.json()["review"] is not None
+    payload = regenerated.json()
+    assert payload["field"] == "title"
+    assert payload["value"]
+    assert "body" not in payload
+    assert payload["review"] is not None
+    assert payload["base_field_digest"]
+    assert payload["base_content_digest"]
+
+
+def test_regenerate_field_reports_missing_style_form(client: TestClient) -> None:
+    draft = _draft_payload()
+    draft.pop("style_form")
+    response = client.post(
+        "/api/v1/notes/regenerate-field",
+        json={"draft": draft, "field": "body"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "style_form_required"
+
+
+def test_regenerate_field_rejects_unknown_field(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/notes/regenerate-field",
+        json={"draft": _draft_payload(), "field": "topic_angle"},
+    )
+
+    assert response.status_code == 422
 
 
 def test_generate_note_rejects_invalid_source(client: TestClient) -> None:

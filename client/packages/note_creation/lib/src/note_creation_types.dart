@@ -15,11 +15,17 @@ typedef GenerateNoteWithProgress =
       void Function(AgentRun run)? onRunCreated,
     });
 typedef CancelAgentRun = Future<AgentRun> Function(String runId);
+typedef ResumeAgentRun =
+    Future<StyledNoteResponse> Function(
+      String runId, {
+      void Function(AgentRunEvent event)? onEvent,
+      void Function(AgentRun run)? onRunCreated,
+    });
 typedef UploadAsset = Future<String> Function(String filePath);
 
 // field 是 title/body/hashtags/cover_copy 之一，服务端据此执行局部更新。
 typedef RegenerateField =
-    Future<NoteDraft> Function(
+    Future<FieldSuggestion> Function(
       NoteDraft draft,
       String field, {
       StyleForm? form,

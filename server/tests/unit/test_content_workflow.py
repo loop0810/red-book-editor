@@ -7,6 +7,7 @@ import pytest
 
 from red_book_editor_server.domain.contracts import (
     ClaimSupport,
+    EditableField,
     NoteDraftDto,
     NoteStatus,
     ReviewFindingDto,
@@ -25,6 +26,8 @@ from red_book_editor_server.modules.content_workflow import (
 from red_book_editor_server.modules.content_workflow.fact_ledger import (
     audit_claims,
     build_fact_ledger,
+    content_digest,
+    field_digest,
 )
 from red_book_editor_server.modules.content_workflow.service import (
     ContentWorkflowService,
@@ -94,6 +97,24 @@ def test_claim_audit_does_not_mark_source_external_details_supported() -> None:
 
     assert audit
     assert all(item.support is not ClaimSupport.SUPPORTED for item in audit)
+
+
+def test_review_findings_include_normalized_field_metadata() -> None:
+    result = DeterministicContentReviewer().review(_draft("宝宝发烧应该吃什么药？"))
+
+    finding = result.findings[0]
+    assert finding.field == "body"
+    assert finding.matched_text == "吃什么药"
+
+
+def test_field_and_content_digests_are_stable_and_field_scoped() -> None:
+    draft = _draft("宝宝发烧应该吃什么药？")
+
+    assert field_digest(draft, EditableField.BODY) == field_digest(
+        draft.model_copy(), EditableField.BODY
+    )
+    assert content_digest(draft) == content_digest(draft.model_copy())
+    assert field_digest(draft, EditableField.BODY) != field_digest(draft, EditableField.TITLE)
 
 
 def _draft(body: str) -> NoteDraftDto:
@@ -191,13 +212,12 @@ async def test_shared_service_regenerates_only_requested_field_and_reaudits() ->
     )
     original = result.draft
     regenerated = await ContentWorkflowService().regenerate_field(original, "title")
-    assert regenerated.body == original.body
-    assert regenerated.hashtags == original.hashtags
-    assert regenerated.cover_copy == original.cover_copy
-    assert regenerated.source == original.source
-    assert regenerated.style_form is StyleForm.EXPERIENCE
+    assert regenerated.field is EditableField.TITLE
+    assert regenerated.value != []
+    assert regenerated.note_id == original.note_id
+    assert regenerated.base_field_digest == field_digest(original, EditableField.TITLE)
+    assert regenerated.base_content_digest == content_digest(original)
     assert regenerated.review is not None
-    assert regenerated.status is NoteStatus.READY
 
 
 @pytest.mark.asyncio

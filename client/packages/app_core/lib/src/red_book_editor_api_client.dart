@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -114,6 +115,43 @@ class RedBookEditorApiClient {
     required String runId,
     int after = 0,
   }) async* {
+    var cursor = after;
+    var reconnects = 0;
+    while (true) {
+      try {
+        var terminal = false;
+        await for (final event in _watchAgentRunEventsOnce(
+          runId: runId,
+          after: cursor,
+        )) {
+          if (event.sequence <= cursor) continue;
+          cursor = event.sequence;
+          yield event;
+          if (_isTerminalAgentEvent(event)) terminal = true;
+        }
+        if (terminal) return;
+        final current = await getAgentRun(runId: runId);
+        if (_isTerminalStatus(current.status)) return;
+      } on ApiRequestException {
+        rethrow;
+      } on SocketException catch (_) {
+        reconnects++;
+        if (reconnects > 3) rethrow;
+      } on http.ClientException catch (_) {
+        reconnects++;
+        if (reconnects > 3) rethrow;
+      } on TimeoutException catch (_) {
+        reconnects++;
+        if (reconnects > 3) rethrow;
+      }
+      await Future<void>.delayed(Duration(milliseconds: 100 * reconnects));
+    }
+  }
+
+  Stream<AgentRunEvent> _watchAgentRunEventsOnce({
+    required String runId,
+    required int after,
+  }) async* {
     final uri = Uri.parse(
       '$baseUrl/api/v1/agent-runs/$runId/events',
     ).replace(queryParameters: {'after': '$after'});
@@ -154,6 +192,23 @@ class RedBookEditorApiClient {
       form: form,
     );
     onRunCreated?.call(run);
+    return _finishAgentRunWithProgress(run, onEvent: onEvent);
+  }
+
+  Future<StyledNoteResponse> resumeAgentRunWithProgress({
+    required String runId,
+    void Function(AgentRunEvent event)? onEvent,
+    void Function(AgentRun run)? onRunCreated,
+  }) async {
+    final run = await resumeAgentRun(runId: runId);
+    onRunCreated?.call(run);
+    return _finishAgentRunWithProgress(run, onEvent: onEvent);
+  }
+
+  Future<StyledNoteResponse> _finishAgentRunWithProgress(
+    AgentRun run, {
+    void Function(AgentRunEvent event)? onEvent,
+  }) async {
     final trace = <AgentTraceStep>[];
     await for (final event in watchAgentRunEvents(runId: run.runId)) {
       onEvent?.call(event);
@@ -208,7 +263,7 @@ class RedBookEditorApiClient {
     );
   }
 
-  Future<NoteDraft> regenerateField({
+  Future<FieldSuggestion> regenerateField({
     required NoteDraft draft,
     required String field,
     StyleForm? form,
@@ -225,7 +280,7 @@ class RedBookEditorApiClient {
     if (response.statusCode >= 400) {
       throw ApiRequestException(response.statusCode, response.body);
     }
-    return NoteDraft.fromJson(
+    return FieldSuggestion.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }
@@ -435,4 +490,19 @@ AgentRunEvent? _agentRunEventFromSse(String block) {
       .join();
   if (data.isEmpty) return null;
   return AgentRunEvent.fromJson(jsonDecode(data) as Map<String, dynamic>);
+}
+
+bool _isTerminalAgentEvent(AgentRunEvent event) {
+  return _isTerminalStatus(event.status) ||
+      event.eventType == 'run.completed' ||
+      event.eventType == 'run.failed' ||
+      event.eventType == 'run.cancelled' ||
+      event.eventType == 'run.interrupted';
+}
+
+bool _isTerminalStatus(String? status) {
+  return status == 'completed' ||
+      status == 'failed' ||
+      status == 'cancelled' ||
+      status == 'interrupted';
 }

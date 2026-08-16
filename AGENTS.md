@@ -21,6 +21,7 @@
 
 - 完成并归档修复 `docs/error/` 问题的 OpenSpec change 后，必须同步更新 `docs/error/change-fix-history.md`。
 - 记录必须包含关联问题、change 名称、实际改动、验证结果和未覆盖范围；不能只复制 proposal 或 tasks。
+- OpenSpec change 完成归档后，必须自动创建 Git commit；commit 只包含本次 change 及其归档、文档同步和验证记录相关文件，不自动 push 到远程。
 
 ## 验证
 

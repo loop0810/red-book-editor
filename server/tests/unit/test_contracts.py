@@ -5,7 +5,13 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from red_book_editor_server.domain.contracts import SourceExperienceDto
+from red_book_editor_server.domain.contracts import (
+    EditableField,
+    FieldSuggestionDto,
+    ReviewFindingDto,
+    RiskLevel,
+    SourceExperienceDto,
+)
 
 
 def test_source_experience_requires_a_scenario_and_action() -> None:
@@ -26,3 +32,35 @@ def test_source_experience_accepts_asset_ids() -> None:
         asset_ids=[uuid4()],
     )
     assert len(source.asset_ids) == 1
+
+
+def test_field_suggestion_contract_round_trips_target_value() -> None:
+    suggestion = FieldSuggestionDto.model_validate(
+        {
+            "suggestion_id": str(uuid4()),
+            "note_id": str(uuid4()),
+            "field": "hashtags",
+            "value": ["#育儿日常", "#睡前流程"],
+            "base_field_digest": "field-digest",
+            "base_content_digest": "content-digest",
+            "created_at": "2026-08-16T00:00:00Z",
+        }
+    )
+
+    assert suggestion.field is EditableField.HASHTAGS
+    assert suggestion.value == ["#育儿日常", "#睡前流程"]
+    assert "body" not in suggestion.model_dump(mode="json")
+
+
+def test_review_finding_accepts_legacy_payload_without_field() -> None:
+    finding = ReviewFindingDto.model_validate(
+        {
+            "level": RiskLevel.WARNING,
+            "code": "legacy",
+            "message": "旧审核结果",
+            "matched_text": "旧文本",
+        }
+    )
+
+    assert finding.field is None
+    assert finding.matched_text == "旧文本"

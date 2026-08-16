@@ -16,6 +16,7 @@ NoteDraft _draft() {
       scenario: '睡前哭闹',
       actions: ['固定绘本时间'],
     ),
+    titleCandidates: ['原标题'],
     body: '宝宝19个月时，遇到了睡前哭闹。',
   );
 }
@@ -64,7 +65,8 @@ void main() {
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.tap(find.text('生成笔记'));
+    await tester.ensureVisible(find.byType(FilledButton).last);
+    await tester.tap(find.byType(FilledButton).last);
     await tester.pump();
 
     expect(receivedForm, StyleForm.advertorial);
@@ -98,5 +100,194 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('1. 读取风格档案'), findsOneWidget);
     expect(find.text('2. 模型思考'), findsOneWidget);
+  });
+
+  testWidgets('field candidate stays pending until explicit accept', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NoteEditorPage(
+          draft: _draft(),
+          aiBaseline: _draft(),
+          onRegenerateField: (draft, field, {form}) async => FieldSuggestion(
+            suggestionId: 'suggestion-1',
+            noteId: draft.noteId,
+            field: EditableField.title,
+            value: const ['AI 标题'],
+            baseFieldDigest: 'field-digest',
+            baseContentDigest: 'content-digest',
+            evidence: const ['睡前哭闹'],
+            evidenceFactIds: const ['source.scenario'],
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('重新生成标题'));
+    await tester.pumpAndSettle();
+    final titleField = tester.widget<TextField>(find.byType(TextField).first);
+    expect(titleField.controller!.text, '原标题');
+    expect(find.text('AI 标题候选'), findsOneWidget);
+    expect(find.text('来源证据：睡前哭闹、source.scenario'), findsOneWidget);
+
+    await tester.tap(find.text('采纳'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+      'AI 标题',
+    );
+    expect(find.text('AI 标题候选'), findsNothing);
+  });
+
+  testWidgets('manual edit shows baseline diff and conflict choice', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NoteEditorPage(
+          draft: _draft(),
+          aiBaseline: _draft(),
+          onRegenerateField: (draft, field, {form}) async => FieldSuggestion(
+            suggestionId: 'suggestion-1',
+            noteId: draft.noteId,
+            field: EditableField.title,
+            value: const ['AI 标题'],
+            baseFieldDigest: 'field-digest',
+            baseContentDigest: 'content-digest',
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('重新生成标题'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '用户标题');
+    await tester.pump();
+    expect(find.text('查看 AI 初稿与当前编辑 Diff'), findsOneWidget);
+    await tester.tap(find.text('采纳'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+      '用户标题',
+    );
+    await tester.tap(find.text('使用 AI 候选'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+      'AI 标题',
+    );
+  });
+
+  testWidgets('review finding displays matched text and navigates by field', (
+    tester,
+  ) async {
+    final draft = NoteDraft(
+      noteId: _draft().noteId,
+      accountId: _draft().accountId,
+      columnId: _draft().columnId,
+      status: NoteStatus.needsReview,
+      source: _draft().source,
+      titleCandidates: const ['原标题'],
+      body: '宝宝应该吃什么药？',
+      review: const ReviewResult(
+        passed: false,
+        findings: [
+          ReviewFinding(
+            level: RiskLevel.blocking,
+            code: 'medication',
+            message: '请检查用药表述',
+            field: 'body',
+            matchedText: '吃什么药',
+          ),
+        ],
+      ),
+    );
+    await tester.pumpWidget(MaterialApp(home: NoteEditorPage(draft: draft)));
+
+    await tester.scrollUntilVisible(
+      find.text('请检查用药表述'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('命中：吃什么药'), findsOneWidget);
+    await tester.tap(find.text('请检查用药表述'));
+    await tester.pump();
+    expect(FocusManager.instance.primaryFocus, isNotNull);
+  });
+
+  testWidgets('failed generation keeps the run available for resume', (
+    tester,
+  ) async {
+    var resumedRunId = '';
+    var finished = false;
+    var firstAttempt = true;
+    var generationCalled = false;
+    var runCreated = false;
+    final run = AgentRun.fromJson({
+      'run_id': 'run-recover-1',
+      'note_id': _draft().noteId,
+      'account_id': _draft().accountId,
+      'column_id': _draft().columnId,
+      'operation': 'generate',
+      'form': 'experience',
+      'status': 'running',
+      'attempt': 1,
+      'cancel_requested': false,
+      'created_at': '2026-08-16T00:00:00Z',
+      'updated_at': '2026-08-16T00:00:00Z',
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NoteCreationPage(
+          generate: (source, form) async =>
+              StyledNoteResponse(draft: _draft(), agentTrace: const []),
+          generateWithProgress: (source, form, {onEvent, onRunCreated}) async {
+            generationCalled = true;
+            if (firstAttempt) {
+              firstAttempt = false;
+              runCreated = true;
+              onRunCreated?.call(run);
+              throw StateError('network interrupted');
+            }
+            return StyledNoteResponse(draft: _draft(), agentTrace: const []);
+          },
+          resumeAgentRun: (runId, {onEvent, onRunCreated}) async {
+            resumedRunId = runId;
+            return StyledNoteResponse(draft: _draft(), agentTrace: const []);
+          },
+          onDraftGenerated: (response, form) async {
+            finished = true;
+          },
+        ),
+      ),
+    );
+    await tester.enterText(find.widgetWithText(TextField, '发生了什么'), '半夜醒来');
+    await tester.enterText(
+      find.widgetWithText(TextField, '我做了什么（可用逗号分隔）'),
+      '固定安抚流程',
+    );
+    await tester.scrollUntilVisible(
+      find.text('生成笔记'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.drag(find.byType(ListView).first, const Offset(0, -180));
+    await tester.pump();
+    await tester.tap(find.text('生成笔记'));
+    await tester.pumpAndSettle();
+    expect(generationCalled, isTrue);
+    expect(runCreated, isTrue);
+    await tester.scrollUntilVisible(
+      find.text('继续运行'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('继续运行'), findsOneWidget);
+
+    await tester.tap(find.text('继续运行'));
+    await tester.pumpAndSettle();
+    expect(resumedRunId, 'run-recover-1');
+    expect(finished, isTrue);
   });
 }
