@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('uses the local development API by default', () {
     final client = RedBookEditorApiClient();
-    expect(client.baseUrl, 'http://127.0.0.1:8000');
+    expect(client.baseUrl, 'http://127.0.0.1:8100');
   });
 
   test('StyleForm maps to api values', () {
@@ -43,5 +43,33 @@ void main() {
     expect(response.agentTrace.single.label, 'critique_draft');
     expect(response.agentTrace.single.order, 1);
     expect(response.agentTrace.single.phase, 'critique');
+  });
+
+  test('StyledNoteResponse accepts the public result projection', () {
+    final response = StyledNoteResponse.fromJson({
+      'draft': {
+        'note_id': '11111111-1111-1111-1111-111111111111',
+        'account_id': '00000000-0000-0000-0000-000000000001',
+        'column_id': '00000000-0000-0000-0000-000000000002',
+        'status': 'ready',
+        'domain_id': 'parenting',
+        'content_brief': {
+          'focus': '宝宝周岁宴',
+          'raw_material': '不办大型酒宴，只和家人吃顿饭。',
+          'domain_context': {'baby_month': 12},
+        },
+        'focus': '宝宝周岁宴',
+        'title_candidates': ['宝宝周岁宴：和家人吃顿饭'],
+        'body': '记录这次简单的周岁宴。',
+        'hashtags': ['#周岁宴'],
+        'image_suggestions': ['家庭合照'],
+        'updated_at': '2026-08-16T00:00:00Z',
+      },
+      'issues': [],
+    });
+
+    expect(response.draft.focus, '宝宝周岁宴');
+    expect(response.draft.review, isNull);
+    expect(response.agentTrace, isEmpty);
   });
 }

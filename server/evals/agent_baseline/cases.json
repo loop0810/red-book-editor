@@ -2,6 +2,11 @@
   {
     "case_id": "case-01-fever-care",
     "form": "experience",
+    "content_brief": {
+      "focus": "宝宝高烧后的就医照护记录",
+      "raw_material": "发现宝宝高烧后带宝宝去了三甲医院检查；按医院开具的退烧药照护；回家后用温水擦拭身体。第二天睡醒，宝宝退烧了。",
+      "domain_context": {"baby_month": 7}
+    },
     "source": {
       "baby_month": 7,
       "scenario": "宝宝突发高烧",
@@ -35,6 +40,11 @@
   {
     "case_id": "case-02-soft-stairs",
     "form": "advertorial",
+    "content_brief": {
+      "focus": "宝宝想往沙发上爬时的软包楼梯体验",
+      "raw_material": "宝宝喜欢爬来爬去，开始想要往沙发上爬；买了一个软包楼梯。宝宝很喜欢，非常开心地向沙发上爬。",
+      "domain_context": {"baby_month": 10}
+    },
     "source": {
       "baby_month": 10,
       "scenario": "宝宝喜欢爬来爬去，开始想要往沙发上爬",
@@ -63,6 +73,11 @@
   {
     "case_id": "case-03-contact-sleep",
     "form": "experience",
+    "content_brief": {
+      "focus": "宝宝严重落地醒时的照护经历",
+      "raw_material": "宝宝落地醒非常严重，完全没有办法放下；整夜抱着宝宝睡觉；斜躺着让宝宝趴在身上。宝宝一天天长大，越来越可爱。",
+      "domain_context": {"baby_month": 8}
+    },
     "source": {
       "baby_month": 8,
       "scenario": "宝宝落地醒非常严重，完全没有办法放下",
@@ -91,6 +106,11 @@
   {
     "case_id": "case-04-first-walking-shoes",
     "form": "popular_science",
+    "content_brief": {
+      "focus": "为想学走路的宝宝挑鞋记录",
+      "raw_material": "宝宝想要站起来走路，总是扶着围栏爬起来；为宝宝挑选适合学习走路的鞋子，查阅了很多资料，跑过很多店铺。很多品牌其实存在很大的溢价，要看宝宝喜欢什么。",
+      "domain_context": {"baby_month": 11}
+    },
     "source": {
       "baby_month": 11,
       "scenario": "宝宝想要站起来走路，总是扶着围栏爬起来",
@@ -120,6 +140,11 @@
   {
     "case_id": "case-05-first-birthday",
     "form": "experience",
+    "content_brief": {
+      "focus": "宝宝周岁宴",
+      "raw_material": "宝宝周岁了；没有邀请很多人；邀请父母和朋友为宝宝举行周岁宴；大家都很开心。",
+      "domain_context": {"baby_month": 12}
+    },
     "source": {
       "baby_month": 12,
       "scenario": "宝宝周岁了",

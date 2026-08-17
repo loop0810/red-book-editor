@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from red_book_editor_server.app.config import get_settings
 from red_book_editor_server.app.dependencies import build_model_gateway, database_session
 from red_book_editor_server.domain.contracts import (
     AssetDto,
+    ContentBriefDto,
     DraftVersionDto,
     NoteDraftDto,
     NoteStatus,
@@ -21,8 +22,10 @@ from red_book_editor_server.domain.contracts import (
     ReviewResultDto,
     SourceExperienceDto,
     StyleForm,
+    UserFacingIssueDto,
 )
 from red_book_editor_server.domain.ports import ModelGatewayError
+from red_book_editor_server.domain.strategy import DomainStrategyRegistry
 from red_book_editor_server.infrastructure.models import (
     AccountModel,
     AssetModel,
@@ -36,6 +39,7 @@ from red_book_editor_server.infrastructure.repositories import (
 )
 from red_book_editor_server.modules.content_workflow.generator import ContentGenerationError
 from red_book_editor_server.modules.content_workflow.review import (
+    project_user_issue,
     review_draft,
     review_matches_draft,
     status_for_review,
@@ -52,7 +56,14 @@ class CreateNoteRequest(BaseModel):
     column_id: UUID
     form: StyleForm | None = None
     style_form: StyleForm | None = None
-    source: SourceExperienceDto
+    content_brief: ContentBriefDto | None = None
+    source: SourceExperienceDto | None = None
+
+    @model_validator(mode="after")
+    def require_content_input(self) -> "CreateNoteRequest":
+        if self.content_brief is None and self.source is None:
+            raise ValueError("content_brief_required")
+        return self
 
 
 class PublishRecordInput(BaseModel):
@@ -199,7 +210,6 @@ async def delete_asset(
 
 
 def note_dto(note: NoteModel) -> NoteDraftDto:
-    source = SourceExperienceDto.model_validate(note.source)
     content = note.content
     review = ReviewResultDto.model_validate(note.review) if note.review else None
     draft = NoteDraftDto(
@@ -207,17 +217,28 @@ def note_dto(note: NoteModel) -> NoteDraftDto:
         account_id=note.account_id,
         column_id=note.column_id,
         status=NoteStatus(note.status),
+        domain_id=content.get("domain_id", "parenting"),
         topic_angle=content.get("topic_angle", ""),
         title_candidates=content.get("title_candidates", []),
         body=content.get("body", ""),
         hashtags=content.get("hashtags", []),
         cover_copy=content.get("cover_copy", ""),
         image_suggestions=content.get("image_suggestions", []),
-        source=source,
+        content_brief=ContentBriefDto.model_validate(content["content_brief"])
+        if content.get("content_brief")
+        else None,
+        source=SourceExperienceDto.model_validate(note.source)
+        if "baby_month" in note.source
+        else None,
         style_form=StyleForm(content["style_form"])
         if content.get("style_form") is not None
         else None,
         review=review,
+        user_issue=(
+            UserFacingIssueDto.model_validate(content["user_issue"])
+            if content.get("user_issue")
+            else None
+        ),
         updated_at=note.updated_at or datetime.now(UTC),
     )
     stored_status = NoteStatus(note.status)
@@ -226,22 +247,30 @@ def note_dto(note: NoteModel) -> NoteDraftDto:
     return draft
 
 
-@router.post("/api/v1/accounts/{account_id}/notes", response_model=NoteDraftDto, status_code=201)
+@router.post(
+    "/api/v1/accounts/{account_id}/notes",
+    response_model=NoteDraftDto,
+    response_model_exclude={"review"},
+    status_code=201,
+)
 async def create_note(
     account_id: UUID,
     request: CreateNoteRequest,
     session: AsyncSession = Depends(database_session),
 ) -> NoteDraftDto:
     settings = get_settings()
-    service = ContentWorkflowService(
-        context=SqlAlchemyAccountColumnContextRepository(session),
-        model_provider=settings.model_provider,
-        gateway=(build_model_gateway(settings) if settings.model_provider == "deepseek" else None),
-    )
     try:
+        service = ContentWorkflowService(
+            context=SqlAlchemyAccountColumnContextRepository(session),
+            model_provider=settings.model_provider,
+            gateway=(
+                build_model_gateway(settings) if settings.model_provider == "deepseek" else None
+            ),
+        )
         result = await service.generate(
             account_id=account_id,
             column_id=request.column_id,
+            brief=request.content_brief,
             source=request.source,
             form=request.form or request.style_form or StyleForm.EXPERIENCE,
         )
@@ -255,7 +284,11 @@ async def create_note(
         ) from error
 
 
-@router.get("/api/v1/notes/{note_id}", response_model=NoteDraftDto)
+@router.get(
+    "/api/v1/notes/{note_id}",
+    response_model=NoteDraftDto,
+    response_model_exclude={"review"},
+)
 async def get_note(
     note_id: UUID,
     session: AsyncSession = Depends(database_session),
@@ -266,7 +299,11 @@ async def get_note(
     return note_dto(note)
 
 
-@router.get("/api/v1/accounts/{account_id}/notes", response_model=list[NoteDraftDto])
+@router.get(
+    "/api/v1/accounts/{account_id}/notes",
+    response_model=list[NoteDraftDto],
+    response_model_exclude={"review"},
+)
 async def list_account_notes(
     account_id: UUID,
     session: AsyncSession = Depends(database_session),
@@ -279,7 +316,11 @@ async def list_account_notes(
     return [note_dto(note) for note in result.scalars()]
 
 
-@router.put("/api/v1/notes/{note_id}", response_model=NoteDraftDto)
+@router.put(
+    "/api/v1/notes/{note_id}",
+    response_model=NoteDraftDto,
+    response_model_exclude={"review"},
+)
 async def update_note(
     note_id: UUID,
     payload: UpdateNoteRequest,
@@ -306,9 +347,15 @@ async def update_note(
             "review": None,
         }
     )
-    review = await review_draft(candidate)
+    account = await session.get(AccountModel, current.account_id)
+    strategy = DomainStrategyRegistry().resolve(account.domain_id if account else "parenting")
+    review = await review_draft(candidate, strategy=strategy)
     reviewed = candidate.model_copy(
-        update={"review": review, "status": status_for_review(review, candidate)}
+        update={
+            "review": review,
+            "status": status_for_review(review, candidate),
+            "user_issue": project_user_issue(review, strategy=strategy),
+        }
     )
     try:
         return await SqlAlchemyNoteRepository(session).save(reviewed)
@@ -334,6 +381,9 @@ async def list_note_versions(
     return [
         DraftVersionDto(
             version=version.version,
+            content_brief=ContentBriefDto.model_validate(version.content["content_brief"])
+            if version.content.get("content_brief")
+            else None,
             topic_angle=version.content.get("topic_angle", ""),
             title_candidates=version.content.get("title_candidates", []),
             body=version.content.get("body", ""),
@@ -352,7 +402,11 @@ async def list_note_versions(
     ]
 
 
-@router.get("/api/v1/notes/{note_id}/export", response_model=NoteDraftDto)
+@router.get(
+    "/api/v1/notes/{note_id}/export",
+    response_model=NoteDraftDto,
+    response_model_exclude={"review"},
+)
 async def export_note(
     note_id: UUID,
     session: AsyncSession = Depends(database_session),

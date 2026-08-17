@@ -141,6 +141,147 @@ class SourceExperience {
   }
 }
 
+class ContentBrief {
+  const ContentBrief({
+    required this.focus,
+    required this.rawMaterial,
+    this.domainContext = const {},
+    this.assetIds = const [],
+  });
+
+  final String focus;
+  final String rawMaterial;
+  final Map<String, Object?> domainContext;
+  final List<String> assetIds;
+
+  Map<String, Object?> toJson() => {
+    'focus': focus,
+    'raw_material': rawMaterial,
+    'domain_context': domainContext,
+    'asset_ids': assetIds,
+  };
+
+  factory ContentBrief.fromJson(Map<String, dynamic> json) => ContentBrief(
+    focus: json['focus'] as String? ?? '',
+    rawMaterial: json['raw_material'] as String? ?? '',
+    domainContext:
+        (json['domain_context'] as Map<dynamic, dynamic>? ?? const {}).map(
+          (key, value) => MapEntry(key.toString(), value),
+        ),
+    assetIds: (json['asset_ids'] as List<dynamic>? ?? const []).cast<String>(),
+  );
+
+  factory ContentBrief.fromLegacy(SourceExperience source) => ContentBrief(
+    focus: source.scenario,
+    rawMaterial: [
+      if (source.actions.isNotEmpty) source.actions.join('；'),
+      if (source.observations.isNotEmpty) source.observations,
+      if (source.notes.isNotEmpty) source.notes,
+    ].join('\n'),
+    domainContext: {'baby_month': source.babyMonth},
+    assetIds: source.assetIds,
+  );
+}
+
+class UserFacingIssue {
+  const UserFacingIssue({
+    required this.category,
+    required this.message,
+    this.field,
+    this.action,
+  });
+
+  final String category;
+  final String message;
+  final String? field;
+  final String? action;
+
+  factory UserFacingIssue.fromJson(Map<String, dynamic> json) =>
+      UserFacingIssue(
+        category: json['category'] as String? ?? 'review',
+        message: json['message'] as String? ?? '',
+        field: json['field'] as String?,
+        action: json['action'] as String?,
+      );
+}
+
+class AccountProfile {
+  const AccountProfile({
+    required this.accountId,
+    required this.domainId,
+    required this.positioning,
+    required this.tone,
+    this.domainContext = const {},
+    this.currentBabyMonth,
+    this.boundaries = const [],
+    this.commonExpressions = const [],
+  });
+
+  final String accountId;
+  final String domainId;
+  final String positioning;
+  final String tone;
+  final Map<String, Object?> domainContext;
+  final int? currentBabyMonth;
+  final List<String> boundaries;
+  final List<String> commonExpressions;
+
+  factory AccountProfile.fromJson(Map<String, dynamic> json) => AccountProfile(
+    accountId: json['account_id'] as String,
+    domainId: json['domain_id'] as String? ?? 'parenting',
+    positioning: json['positioning'] as String? ?? '',
+    tone: json['tone'] as String? ?? '',
+    domainContext:
+        (json['domain_context'] as Map<dynamic, dynamic>? ?? const {}).map(
+          (key, value) => MapEntry(key.toString(), value),
+        ),
+    currentBabyMonth: json['current_baby_month'] as int?,
+    boundaries: (json['boundaries'] as List<dynamic>? ?? const [])
+        .cast<String>(),
+    commonExpressions:
+        (json['common_expressions'] as List<dynamic>? ?? const [])
+            .cast<String>(),
+  );
+
+  Map<String, Object?> toJson() => {
+    'domain_id': domainId,
+    'domain_context': domainContext,
+    'positioning': positioning,
+    'tone': tone,
+    'current_baby_month': currentBabyMonth,
+    'boundaries': boundaries,
+    'common_expressions': commonExpressions,
+  };
+}
+
+class ContentColumn {
+  const ContentColumn({
+    required this.columnId,
+    required this.accountId,
+    required this.name,
+    required this.description,
+    this.contentTypes = const [],
+    this.enabled = true,
+  });
+
+  final String columnId;
+  final String accountId;
+  final String name;
+  final String description;
+  final List<String> contentTypes;
+  final bool enabled;
+
+  factory ContentColumn.fromJson(Map<String, dynamic> json) => ContentColumn(
+    columnId: json['column_id'] as String,
+    accountId: json['account_id'] as String,
+    name: json['name'] as String? ?? '',
+    description: json['description'] as String? ?? '',
+    contentTypes: (json['content_types'] as List<dynamic>? ?? const [])
+        .cast<String>(),
+    enabled: json['enabled'] as bool? ?? true,
+  );
+}
+
 class ReviewFinding {
   const ReviewFinding({
     required this.level,
@@ -342,7 +483,9 @@ class NoteDraft {
     required this.accountId,
     required this.columnId,
     required this.status,
-    required this.source,
+    this.source,
+    this.contentBrief,
+    this.domainId = 'parenting',
     this.topicAngle = '',
     this.titleCandidates = const [],
     this.body = '',
@@ -351,6 +494,7 @@ class NoteDraft {
     this.imageSuggestions = const [],
     this.styleForm,
     this.review,
+    this.userIssue,
     this.updatedAt = '',
   });
 
@@ -358,7 +502,9 @@ class NoteDraft {
   final String accountId;
   final String columnId;
   final NoteStatus status;
-  final SourceExperience source;
+  final SourceExperience? source;
+  final ContentBrief? contentBrief;
+  final String domainId;
   final String topicAngle;
   final List<String> titleCandidates;
   final String body;
@@ -367,9 +513,11 @@ class NoteDraft {
   final List<String> imageSuggestions;
   final StyleForm? styleForm;
   final ReviewResult? review;
+  final UserFacingIssue? userIssue;
   final String updatedAt;
 
   List<ReviewFinding> get reviewFindings => review?.findings ?? const [];
+  String get focus => contentBrief?.focus ?? source?.scenario ?? '';
 
   factory NoteDraft.fromJson(Map<String, dynamic> json) {
     // fromJson 负责把服务端完整响应拆成类型安全对象；缺省字段提供向后兼容。
@@ -378,7 +526,19 @@ class NoteDraft {
       accountId: json['account_id'] as String,
       columnId: json['column_id'] as String,
       status: _noteStatusFromApi(json['status'] as String),
-      source: SourceExperience.fromJson(json['source'] as Map<String, dynamic>),
+      source: json['source'] is Map<String, dynamic>
+          ? SourceExperience.fromJson(json['source'] as Map<String, dynamic>)
+          : null,
+      contentBrief: json['content_brief'] is Map<String, dynamic>
+          ? ContentBrief.fromJson(json['content_brief'] as Map<String, dynamic>)
+          : (json['source'] is Map<String, dynamic>
+                ? ContentBrief.fromLegacy(
+                    SourceExperience.fromJson(
+                      json['source'] as Map<String, dynamic>,
+                    ),
+                  )
+                : null),
+      domainId: json['domain_id'] as String? ?? 'parenting',
       topicAngle: json['topic_angle'] as String? ?? '',
       titleCandidates: (json['title_candidates'] as List<dynamic>? ?? const [])
           .cast<String>(),
@@ -394,6 +554,9 @@ class NoteDraft {
       review: json['review'] is Map<String, dynamic>
           ? ReviewResult.fromJson(json['review'] as Map<String, dynamic>)
           : null,
+      userIssue: json['user_issue'] is Map<String, dynamic>
+          ? UserFacingIssue.fromJson(json['user_issue'] as Map<String, dynamic>)
+          : null,
       updatedAt: json['updated_at'] as String? ?? '',
     );
   }
@@ -404,6 +567,7 @@ class NoteDraft {
     'account_id': accountId,
     'column_id': columnId,
     'status': _noteStatusToApi(status),
+    'domain_id': domainId,
     'topic_angle': topicAngle,
     'title_candidates': titleCandidates,
     'body': body,
@@ -411,8 +575,17 @@ class NoteDraft {
     'cover_copy': coverCopy,
     'image_suggestions': imageSuggestions,
     'style_form': styleForm == null ? null : styleFormToApi(styleForm!),
-    'source': source.toJson(),
+    if (source != null) 'source': source!.toJson(),
+    if (contentBrief != null) 'content_brief': contentBrief!.toJson(),
     'review': review?.toJson(),
+    'user_issue': userIssue == null
+        ? null
+        : {
+            'category': userIssue!.category,
+            'message': userIssue!.message,
+            'field': userIssue!.field,
+            'action': userIssue!.action,
+          },
     'updated_at': updatedAt,
   };
 
@@ -426,6 +599,9 @@ class NoteDraft {
     List<String>? imageSuggestions,
     StyleForm? styleForm,
     ReviewResult? review,
+    ContentBrief? contentBrief,
+    String? domainId,
+    UserFacingIssue? userIssue,
     String? updatedAt,
   }) {
     // copyWith 用于局部修改：只替换用户刚编辑的字段，其他字段沿用原对象。
@@ -435,6 +611,8 @@ class NoteDraft {
       columnId: columnId,
       status: status ?? this.status,
       source: source,
+      contentBrief: contentBrief ?? this.contentBrief,
+      domainId: domainId ?? this.domainId,
       topicAngle: topicAngle ?? this.topicAngle,
       titleCandidates: titleCandidates ?? this.titleCandidates,
       body: body ?? this.body,
@@ -443,6 +621,7 @@ class NoteDraft {
       imageSuggestions: imageSuggestions ?? this.imageSuggestions,
       styleForm: styleForm ?? this.styleForm,
       review: review ?? this.review,
+      userIssue: userIssue ?? this.userIssue,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -614,20 +793,98 @@ class AgentRunEvent {
 
 class StyledNoteResponse {
   // 生成接口的组合响应：draft 给编辑器，agentTrace 给调试/学习面板。
-  const StyledNoteResponse({required this.draft, required this.agentTrace});
+  const StyledNoteResponse({
+    required this.draft,
+    this.agentTrace = const [],
+    this.userResult,
+  });
 
   final NoteDraft draft;
   final List<AgentTraceStep> agentTrace;
+  final UserResultProjection? userResult;
 
   factory StyledNoteResponse.fromJson(Map<String, dynamic> json) {
+    final resultJson = json['user_result'] as Map<String, dynamic>?;
+    final publicDraftJson = json['draft'] as Map<String, dynamic>?;
+    final draftJson = _draftJsonFromProjection(
+      publicDraftJson ?? resultJson ?? <String, dynamic>{},
+    );
+    final issues = json['issues'] as List<dynamic>? ?? const [];
+    if (draftJson['user_issue'] == null && issues.isNotEmpty) {
+      draftJson['user_issue'] = issues.first;
+    }
     return StyledNoteResponse(
-      draft: NoteDraft.fromJson(json['draft'] as Map<String, dynamic>),
+      draft: NoteDraft.fromJson(draftJson),
       agentTrace: (json['agent_trace'] as List<dynamic>? ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(AgentTraceStep.fromJson)
           .toList(),
+      userResult: json['user_result'] is Map<String, dynamic>
+          ? UserResultProjection.fromJson(
+              json['user_result'] as Map<String, dynamic>,
+            )
+          : null,
     );
   }
+}
+
+Map<String, dynamic> _draftJsonFromProjection(Map<String, dynamic> json) {
+  final draft = <String, dynamic>{...json};
+  if (draft['content_brief'] is! Map<String, dynamic> &&
+      draft['source'] is! Map<String, dynamic>) {
+    draft['content_brief'] = {
+      'focus': draft['focus'] as String? ?? '',
+      'raw_material': draft['body'] as String? ?? '',
+    };
+  }
+  if (draft['user_issue'] == null && draft['issue'] != null) {
+    draft['user_issue'] = draft['issue'];
+  }
+  return draft;
+}
+
+class UserResultProjection {
+  const UserResultProjection({
+    required this.noteId,
+    required this.focus,
+    required this.titleCandidates,
+    required this.body,
+    required this.hashtags,
+    required this.imageSuggestions,
+    this.coverCopy = '',
+    this.contentBrief,
+    this.issue,
+  });
+
+  final String noteId;
+  final String focus;
+  final List<String> titleCandidates;
+  final String body;
+  final List<String> hashtags;
+  final String coverCopy;
+  final List<String> imageSuggestions;
+  final ContentBrief? contentBrief;
+  final UserFacingIssue? issue;
+
+  factory UserResultProjection.fromJson(
+    Map<String, dynamic> json,
+  ) => UserResultProjection(
+    noteId: json['note_id'] as String? ?? '',
+    focus: json['focus'] as String? ?? '',
+    titleCandidates: (json['title_candidates'] as List<dynamic>? ?? const [])
+        .cast<String>(),
+    body: json['body'] as String? ?? '',
+    hashtags: (json['hashtags'] as List<dynamic>? ?? const []).cast<String>(),
+    coverCopy: json['cover_copy'] as String? ?? '',
+    imageSuggestions: (json['image_suggestions'] as List<dynamic>? ?? const [])
+        .cast<String>(),
+    contentBrief: json['content_brief'] is Map<String, dynamic>
+        ? ContentBrief.fromJson(json['content_brief'] as Map<String, dynamic>)
+        : null,
+    issue: json['issue'] is Map<String, dynamic>
+        ? UserFacingIssue.fromJson(json['issue'] as Map<String, dynamic>)
+        : null,
+  );
 }
 
 class Asset {

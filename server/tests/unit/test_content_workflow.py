@@ -7,6 +7,7 @@ import pytest
 
 from red_book_editor_server.domain.contracts import (
     ClaimSupport,
+    ContentBriefDto,
     EditableField,
     NoteDraftDto,
     NoteStatus,
@@ -41,6 +42,50 @@ async def test_stub_generator_preserves_source_facts() -> None:
     draft = await StubContentGenerator().generate(source)
     assert draft.source == source
     assert "睡前哭闹" in draft.body
+    assert draft.title_candidates[0].startswith("睡前哭闹")
+    assert len(draft.body) > len(source.scenario) + len(source.actions[0])
+    assert draft.cover_copy != source.scenario
+    assert len(draft.image_suggestions) >= 3
+    assert all(
+        "场景照片" not in item and "过程记录" not in item for item in draft.image_suggestions
+    )
+
+
+@pytest.mark.asyncio
+async def test_content_brief_keeps_focus_primary_without_irrelevant_medical_warning() -> None:
+    brief = ContentBriefDto(
+        focus="宝宝周岁宴",
+        raw_material="不办大型酒宴，只和家人吃顿饭。",
+        domain_context={"baby_month": 12},
+    )
+    result = await ContentWorkflowService().generate(
+        account_id=UUID("00000000-0000-0000-0000-000000000001"),
+        column_id=UUID("00000000-0000-0000-0000-000000000002"),
+        brief=brief,
+        form=StyleForm.EXPERIENCE,
+    )
+
+    assert result.draft.content_brief == brief
+    assert result.draft.title_candidates[0].startswith("宝宝周岁宴")
+    assert result.draft.user_issue is None
+    assert result.draft.review is not None
+    assert not any(
+        finding.code in {"diagnosis", "medication", "medical_context"}
+        for finding in result.draft.review.findings
+    )
+
+
+def test_content_brief_ledger_separates_constraints_from_raw_material() -> None:
+    ledger = build_fact_ledger(
+        ContentBriefDto(
+            focus="宝宝周岁宴",
+            raw_material="不办大型酒宴，只和家人吃顿饭。",
+        )
+    )
+
+    constraints = [fact for fact in ledger.facts if fact.kind.value == "constraint"]
+    assert constraints
+    assert any("不办大型酒宴" in fact.text for fact in constraints)
 
 
 def test_reviewer_allows_common_care_experience() -> None:
@@ -93,6 +138,7 @@ def test_fact_ledger_keeps_source_paths_and_boundary_kinds() -> None:
 
 def test_claim_audit_does_not_mark_source_external_details_supported() -> None:
     draft = _draft("宝宝今天在宴会现场抓周，大家都送上了祝福。")
+    assert draft.source is not None
     audit = audit_claims(draft, build_fact_ledger(draft.source))
 
     assert audit

@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from red_book_editor_server.domain.contracts import (
+    ContentBriefDto,
     NoteDraftDto,
     NoteStatus,
     SourceExperienceDto,
@@ -92,7 +93,7 @@ def test_generate_note_rejects_unknown_form(client: TestClient) -> None:
     assert response.status_code == 422
 
 
-def test_restyle_note_returns_draft_and_trace(client: TestClient) -> None:
+def test_restyle_note_returns_user_result_without_internal_diagnostics(client: TestClient) -> None:
     draft = _draft_payload()
     response = client.post(
         "/api/v1/notes/style",
@@ -101,9 +102,9 @@ def test_restyle_note_returns_draft_and_trace(client: TestClient) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["draft"]["note_id"] == draft["note_id"]
-    assert payload["agent_trace"][0]["label"] == "stub_fallback"
-    assert payload["agent_trace"][-1]["phase"] == "safety_review"
-    assert payload["draft"]["review"] is not None
+    assert payload["draft"]["content_brief"]["focus"] == "出门"
+    assert "agent_trace" not in payload
+    assert "review" not in payload["draft"]
 
 
 def test_regenerate_field_preserves_other_fields(client: TestClient) -> None:
@@ -164,13 +165,14 @@ async def test_generation_retries_timeout_and_preserves_source() -> None:
     class FlakyGenerator:
         async def generate(
             self,
-            received: SourceExperienceDto,
+            received: ContentBriefDto | SourceExperienceDto,
             *,
             account_id: UUID | None = None,
             column_id: UUID | None = None,
         ) -> NoteDraftDto:
             nonlocal calls
             calls += 1
+            assert isinstance(received, SourceExperienceDto)
             assert received == source
             if calls == 1:
                 raise TimeoutError
@@ -191,6 +193,7 @@ async def test_generation_retries_timeout_and_preserves_source() -> None:
         account_id=uuid4(),
         column_id=uuid4(),
     )
+    assert result.source is not None
     assert result.source.scenario == "发烧"
     assert calls == 2
 
@@ -200,7 +203,7 @@ async def test_generation_failure_is_normalized_after_retries() -> None:
     class BrokenGenerator:
         async def generate(
             self,
-            source: SourceExperienceDto,
+            source: ContentBriefDto | SourceExperienceDto,
             *,
             account_id: UUID | None = None,
             column_id: UUID | None = None,

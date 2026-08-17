@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from red_book_editor_server.domain.contracts import SourceExperienceDto, StyleForm
+from red_book_editor_server.domain.contracts import ContentBriefDto, SourceExperienceDto, StyleForm
 
 
 class DraftContent(BaseModel):
@@ -13,12 +13,13 @@ class DraftContent(BaseModel):
     body: str = ""
     hashtags: list[str] = Field(default_factory=list)
     cover_copy: str = ""
+    image_suggestions: list[str] = Field(default_factory=list)
 
 
 class CritiqueArgs(BaseModel):
     form: StyleForm
     draft: DraftContent
-    source: SourceExperienceDto
+    source: ContentBriefDto | SourceExperienceDto
 
 
 class CritiqueResult(BaseModel):

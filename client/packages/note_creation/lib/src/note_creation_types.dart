@@ -4,12 +4,12 @@ import 'package:app_core/app_core.dart';
 // main.dart 负责把真实实现注入进来，测试可以传入 fake 函数。
 typedef GenerateNote =
     Future<StyledNoteResponse> Function(
-      SourceExperience source,
+      ContentBrief contentBrief,
       StyleForm form,
     );
 typedef GenerateNoteWithProgress =
     Future<StyledNoteResponse> Function(
-      SourceExperience source,
+      ContentBrief contentBrief,
       StyleForm form, {
       void Function(AgentRunEvent event)? onEvent,
       void Function(AgentRun run)? onRunCreated,

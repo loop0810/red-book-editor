@@ -8,13 +8,13 @@ from uuid import UUID, uuid4
 from pydantic import ValidationError
 
 from red_book_editor_server.domain.agent import (
-    AGENT_RUNTIME_VERSION,
     AgentRunResult,
     AgentRuntime,
     AgentRuntimeEvent,
     FinalValidation,
 )
 from red_book_editor_server.domain.contracts import (
+    ContentBriefDto,
     NoteDraftDto,
     NoteStatus,
     SourceExperienceDto,
@@ -33,26 +33,34 @@ from red_book_editor_server.modules.content_workflow.styling.tools import build_
 SYSTEM_PROMPT = (
     # 这是业务 Agent 的“行为合同”：模型可以自由组织语言，
     # 但必须遵守事实边界、工具顺序和最终 JSON 结构。
-    "你是一位资深的小红书育儿内容运营专家，负责把用户的中性草稿改写成"
-    "符合所选表达形式的小红书风格文案。\n\n"
+    "你是一位资深的小红书内容运营专家，负责把 ContentBrief 改写成"
+    "符合账号领域和所选表达形式的小红书风格文案。\n\n"
     "规则：\n"
-    "1. 事实底线：只能使用用户提供的 SourceExperience 中的事实，不得编造"
+    "1. 事实底线：只能使用用户提供的 ContentBrief 中的事实，不得编造"
     "专家观点、医院诊断、结果、时间线或任何用户未提供的经历；"
     '"就医红线""及时就医"等通用提醒可以写，但不得伪造"医生说"'
     '"崔玉涛说"等具体背书；风格档案中的示例只是结构提示，不是本次经历的事实。\n'
-    "睡眠、医疗或产品安全相关经历只能如实记录用户做过的事情，"
+    "领域安全相关经历只能如实记录用户提供的事情，"
     "不得用安全、放心、适合照做或保证结果的表达包装风险做法。\n"
+    "1.1 素材完整性：raw_material 是正文的完整事实来源，必须保留其中的关键场景、"
+    "动作、观察、取舍和限制；可以换说法和调整顺序，但不能为了简短而只剩一句摘要。"
+    "focus 是标题第一优先级，raw_material 中的限制条件只能作为正文细节，除非 focus 明确要求，"
+    "不能反客为主成为标题主题。\n"
     "2. 必须先调用 load_style_profile 读取所选表达形式的风格档案，"
     "严格按档案的钩子、结构、语气、富文本与封面规则写作。\n"
     "3. 起草内容时调用 critique_draft（draft 必须包含 topic_angle、"
-    "title_candidates、body、hashtags、cover_copy，source 原样传入）；"
+    "title_candidates、body、hashtags、cover_copy、image_suggestions，source 原样传入）；"
     "critique 返回 passed=false 时，按 issues 修订后再次调用 critique_draft，"
     "最多修订 2 轮。\n"
     "4. 可以调用 suggest_tags 获取话题建议，最终话题数量必须落在档案"
     " tag_count_range 内。\n"
     "5. 只有 critique passed=true 后才能调用 finalize_note 确认内容，"
     "然后以与 finalize_note 入参相同结构的 JSON 对象作为最终回答。\n"
-    '6. 最终回答必须是合法 JSON：{"form": "...", "draft": {...},'
+    "6. 至少给出 3 个围绕 focus 的标题候选；正文要有完整的开头、过程细节、"
+    "真实感受/观察和收束，不得短于原始素材的两倍（最少 100 个字符）；"
+    "封面文案不能只重复 focus；配图建议至少 3 条，必须对应本次素材中的场景、"
+    "动作、物件或细节，不能使用‘场景照片/过程记录’这种空泛模板。\n"
+    '7. 最终回答必须是合法 JSON：{"form": "...", "draft": {...},'
     ' "image_suggestions": [...]}。'
 )
 STYLING_PROMPT_VERSION = "styling-system-v1"
@@ -69,7 +77,8 @@ STYLING_AGENT_CONFIG = {
 async def style_draft(
     gateway: ModelGateway,
     *,
-    source: SourceExperienceDto,
+    brief: ContentBriefDto | SourceExperienceDto | None = None,
+    source: SourceExperienceDto | None = None,
     neutral_draft: NoteDraftDto | None,
     form: StyleForm,
     account_context: str = "",
@@ -79,6 +88,9 @@ async def style_draft(
 ) -> AgentRunResult:
     # 这里是业务 Agent 的入口：准备业务上下文和工具；真正的通用循环
     # 放在 domain/agent.py，因此“写育儿文案”和“如何循环”彼此解耦。
+    active_brief = brief or source
+    if active_brief is None:
+        raise ValueError("content_brief_required")
     profile = load_style_profile(form)
     runtime = AgentRuntime(
         gateway,
@@ -91,7 +103,7 @@ async def style_draft(
     return await runtime.run(
         system=SYSTEM_PROMPT,
         user=_build_user_prompt(
-            source=source,
+            brief=active_brief,
             neutral_draft=neutral_draft,
             form=form,
             profile_display=profile.display_name,
@@ -99,7 +111,7 @@ async def style_draft(
             column_context=column_context,
         ),
         tools=build_styling_tools(),
-        final_validator=_make_final_validator(source, profile),
+        final_validator=_make_final_validator(active_brief, profile),
         cancel_check=cancel_check,
         event_sink=event_sink,
     )
@@ -110,9 +122,13 @@ def finalize_to_note_draft(
     *,
     account_id: UUID,
     column_id: UUID,
-    source: SourceExperienceDto,
+    brief: ContentBriefDto | SourceExperienceDto | None = None,
+    source: SourceExperienceDto | None = None,
     note_id: UUID | None = None,
 ) -> NoteDraftDto:
+    active_brief = brief or source
+    if active_brief is None:
+        raise ValueError("content_brief_required")
     return NoteDraftDto(
         note_id=note_id or uuid4(),
         account_id=account_id,
@@ -124,7 +140,12 @@ def finalize_to_note_draft(
         hashtags=finalized.draft.hashtags,
         cover_copy=finalized.draft.cover_copy,
         image_suggestions=finalized.image_suggestions,
-        source=source,
+        content_brief=(
+            active_brief
+            if isinstance(active_brief, ContentBriefDto)
+            else ContentBriefDto.from_legacy_source(active_brief)
+        ),
+        source=source or (active_brief if isinstance(active_brief, SourceExperienceDto) else None),
         style_form=finalized.form,
         review=None,
         updated_at=datetime.now(UTC),
@@ -133,7 +154,7 @@ def finalize_to_note_draft(
 
 def _build_user_prompt(
     *,
-    source: SourceExperienceDto,
+    brief: ContentBriefDto | SourceExperienceDto,
     neutral_draft: NoteDraftDto | None,
     form: StyleForm,
     profile_display: str,
@@ -144,9 +165,12 @@ def _build_user_prompt(
     # 二者分开后，换账号/栏目/经历不会修改全局规则。
     parts = [
         f"表达形式：{profile_display}（{form.value}）",
-        f"账号定位：{account_context or '备孕-孕检-育儿全程记录的新手爸妈账号'}",
+        f"账号定位：{account_context or '以用户主题和原始素材为中心的内容账号'}",
         f"栏目说明：{column_context or '无'}",
-        f"用户真实经历（SourceExperience）：\n{source.model_dump_json(indent=2)}",
+        "写作任务：标题先抓住 focus；正文完整吸收 raw_material，保留每个具体事实、动作、观察和限制，"
+        "不要把用户提供的内容压缩成一句泛泛总结。请输出 3 个以上标题候选、完整正文、"
+        "符合主题的话题、带有具体信息的封面文案，以及至少 3 条与本次素材直接对应的配图建议。",
+        f"本次内容简报（ContentBrief）：\n{brief.model_dump_json(indent=2)}",
     ]
     if neutral_draft is not None:
         parts.append(
@@ -157,7 +181,7 @@ def _build_user_prompt(
 
 
 def _make_final_validator(
-    source: SourceExperienceDto, profile: StyleProfile
+    brief: ContentBriefDto | SourceExperienceDto, profile: StyleProfile
 ) -> Callable[[str], FinalValidation]:
     def validate(content: str) -> FinalValidation:
         # 模型的最终回答只是字符串，先解析成 FinalizeArgs，再做服务端确定性检查。
@@ -168,12 +192,58 @@ def _make_final_validator(
         except (json.JSONDecodeError, ValidationError) as error:
             return FinalValidation(ok=False, error=f"结构化输出无法解析：{error}")
         decorated = apply_decorator(finalized, profile)
-        ok, issues = check_facts(source, decorated.draft)
-        if not ok:
+        ok, issues = check_facts(brief, decorated.draft)
+        issues.extend(_quality_issues(brief, decorated, profile))
+        if not ok or issues:
             return FinalValidation(ok=False, error="；".join(issues))
         return FinalValidation(ok=True, result=decorated)
 
     return validate
+
+
+def _quality_issues(
+    brief: ContentBriefDto | SourceExperienceDto,
+    finalized: FinalizeArgs,
+    profile: StyleProfile,
+) -> list[str]:
+    """对模型容易偷工减料的用户结果做确定性检查。"""
+
+    draft = finalized.draft
+    focus = brief.focus if isinstance(brief, ContentBriefDto) else brief.scenario
+    material = (
+        brief.raw_material
+        if isinstance(brief, ContentBriefDto)
+        else "；".join([*brief.actions, brief.observations, brief.notes])
+    ).strip()
+    issues: list[str] = []
+    if len(draft.title_candidates) < 3:
+        issues.append("标题候选至少需要 3 个")
+    if not any(_compact(focus) in _compact(title) for title in draft.title_candidates):
+        issues.append("标题候选必须明确围绕内容主题")
+    if _compact(focus) not in _compact(draft.topic_angle):
+        issues.append("选题角度必须明确围绕内容主题")
+    if len(draft.body) < max(100, len(material) * 2):
+        issues.append("正文过短，必须保留原始素材的完整信息并展开过程细节")
+    if not draft.cover_copy.strip() or _compact(draft.cover_copy) == _compact(focus):
+        issues.append("封面文案不能只重复内容主题")
+    if _compact(focus) not in _compact(draft.cover_copy):
+        issues.append("封面文案必须包含内容主题并补充具体角度")
+    if not any(_compact(focus) in _compact(tag) for tag in draft.hashtags):
+        issues.append("至少要有一个话题直接对应内容主题")
+    if len(finalized.image_suggestions) < 3:
+        issues.append("配图建议至少需要 3 条具体建议")
+    if not any(_compact(focus) in _compact(item) for item in finalized.image_suggestions):
+        issues.append("至少要有一条配图建议直接对应内容主题")
+    low, high = profile.rich_text.tag_count_range
+    if not low <= len(draft.hashtags) <= high:
+        issues.append(f"话题数量必须在 {low}-{high} 个之间")
+    return issues
+
+
+def _compact(value: str) -> str:
+    return "".join(
+        character for character in value if character not in " \t\n，。！？、,.!?；;：:（）()[]【】"
+    )
 
 
 def _extract_json(content: str) -> str:

@@ -27,6 +27,30 @@ void main() {
         InMemorySharedPreferencesAsync.empty();
   });
 
+  testWidgets(
+    'primary creation page is content-first and hides internal audit',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NoteCreationPage(
+            generate: (brief, form) async =>
+                StyledNoteResponse(draft: _draft()),
+          ),
+        ),
+      );
+
+      expect(find.text('标题'), findsOneWidget);
+      expect(find.text('正文'), findsOneWidget);
+      expect(find.widgetWithText(TextField, '内容主题'), findsOneWidget);
+      expect(find.widgetWithText(TextField, '原始正文'), findsOneWidget);
+      expect(find.text('发生了什么'), findsNothing);
+      expect(find.text('我做了什么（可用逗号分隔）'), findsNothing);
+      expect(find.text('观察到什么变化'), findsNothing);
+      expect(find.text('Agent 执行过程'), findsNothing);
+      expect(find.textContaining('来源证据'), findsNothing);
+    },
+  );
+
   testWidgets('form selector passes the chosen expression form', (
     tester,
   ) async {
@@ -45,10 +69,10 @@ void main() {
       ),
     );
 
-    await tester.enterText(find.widgetWithText(TextField, '发生了什么'), '宝宝半夜发烧');
+    await tester.enterText(find.widgetWithText(TextField, '内容主题'), '宝宝半夜发烧');
     await tester.enterText(
-      find.widgetWithText(TextField, '我做了什么（可用逗号分隔）'),
-      '温水擦身',
+      find.widgetWithText(TextField, '原始正文'),
+      '宝宝半夜发烧，我记录了体温并陪着照顾。',
     );
     await tester.scrollUntilVisible(
       find.text('科普'),
@@ -72,7 +96,7 @@ void main() {
     expect(receivedForm, StyleForm.advertorial);
   });
 
-  testWidgets('note editor shows agent trace steps', (tester) async {
+  testWidgets('note editor hides internal agent trace', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: NoteEditorPage(
@@ -95,11 +119,9 @@ void main() {
       ),
     );
 
-    expect(find.text('Agent 执行过程'), findsOneWidget);
-    await tester.tap(find.text('Agent 执行过程'));
-    await tester.pumpAndSettle();
-    expect(find.text('1. 读取风格档案'), findsOneWidget);
-    expect(find.text('2. 模型思考'), findsOneWidget);
+    expect(find.text('Agent 执行过程'), findsNothing);
+    expect(find.text('读取风格档案'), findsNothing);
+    expect(find.text('模型思考'), findsNothing);
   });
 
   testWidgets('field candidate stays pending until explicit accept', (
@@ -232,30 +254,21 @@ void main() {
       source: _draft().source,
       titleCandidates: const ['原标题'],
       body: '宝宝应该吃什么药？',
-      review: const ReviewResult(
-        passed: false,
-        findings: [
-          ReviewFinding(
-            level: RiskLevel.blocking,
-            code: 'medication',
-            message: '请检查用药表述',
-            field: 'body',
-            matchedText: '吃什么药',
-          ),
-        ],
+      userIssue: const UserFacingIssue(
+        category: 'safety',
+        message: '这段内容涉及用药建议，暂不能复制或导出。',
+        field: 'body',
+        action: '请删除药物、剂量或疗程建议',
       ),
     );
     await tester.pumpWidget(MaterialApp(home: NoteEditorPage(draft: draft)));
 
     await tester.scrollUntilVisible(
-      find.text('请检查用药表述'),
+      find.text('这段内容涉及用药建议，暂不能复制或导出。'),
       300,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('命中：吃什么药'), findsOneWidget);
-    await tester.tap(find.text('请检查用药表述'));
-    await tester.pump();
-    expect(FocusManager.instance.primaryFocus, isNotNull);
+    expect(find.text('请删除药物、剂量或疗程建议'), findsOneWidget);
   });
 
   testWidgets('failed generation keeps the run available for resume', (
@@ -304,10 +317,10 @@ void main() {
         ),
       ),
     );
-    await tester.enterText(find.widgetWithText(TextField, '发生了什么'), '半夜醒来');
+    await tester.enterText(find.widgetWithText(TextField, '内容主题'), '半夜醒来');
     await tester.enterText(
-      find.widgetWithText(TextField, '我做了什么（可用逗号分隔）'),
-      '固定安抚流程',
+      find.widgetWithText(TextField, '原始正文'),
+      '我记录了固定安抚流程。',
     );
     await tester.scrollUntilVisible(
       find.text('生成笔记'),

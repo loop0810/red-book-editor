@@ -69,6 +69,17 @@ RedBookEditorApiClient _client(
 }
 
 void main() {
+  group('request errors', () {
+    test('model configuration errors are user-readable', () {
+      final error = ApiRequestException(
+        409,
+        jsonEncode({'status': 'failed', 'failure_code': 'agent_model_error'}),
+      );
+
+      expect(error.toString(), 'DeepSeek 模型调用失败，请检查 API Key 和网络连接');
+    });
+  });
+
   group('account isolation', () {
     test('generateNoteWithProgress consumes AgentRun SSE events', () async {
       final paths = <String>[];
@@ -574,5 +585,70 @@ void main() {
       final draft = NoteDraft.fromJson(payload);
       expect(draft.noteId, '11111111-1111-1111-1111-111111111111');
     });
+  });
+
+  group('first-use onboarding', () {
+    test(
+      'creates an account and a default column through server APIs',
+      () async {
+        final paths = <String>[];
+        final client = _client((request) async {
+          paths.add(request.url.path);
+          if (request.method == 'POST' &&
+              request.url.path == '/api/v1/accounts') {
+            return http.Response.bytes(
+              utf8.encode(
+                jsonEncode({
+                  'account_id': _accountId,
+                  'domain_id': 'parenting',
+                  'positioning': '记录真实育儿生活',
+                  'tone': '真实、自然',
+                  'domain_context': {},
+                  'current_baby_month': 0,
+                  'boundaries': [],
+                  'common_expressions': [],
+                }),
+              ),
+              201,
+            );
+          }
+          return http.Response.bytes(
+            utf8.encode(
+              jsonEncode({
+                'column_id': _columnId,
+                'account_id': _accountId,
+                'name': '日常分享',
+                'description': '记录真实经历',
+                'content_types': ['note'],
+                'enabled': true,
+              }),
+            ),
+            201,
+          );
+        });
+
+        final account = await client.createAccount(
+          account: const AccountProfile(
+            accountId: '',
+            domainId: 'parenting',
+            positioning: '记录真实育儿生活',
+            tone: '真实、自然',
+          ),
+        );
+        final column = await client.createColumn(
+          accountId: account.accountId,
+          name: '日常分享',
+          description: '记录真实经历',
+          contentTypes: const ['note'],
+        );
+
+        expect(account.accountId, _accountId);
+        expect(column.columnId, _columnId);
+        expect(paths, [
+          '/api/v1/accounts',
+          '/api/v1/accounts/$_accountId/columns',
+        ]);
+      },
+    );
   });
 }

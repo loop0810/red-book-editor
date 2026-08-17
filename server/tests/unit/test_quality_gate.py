@@ -36,10 +36,8 @@ def _payload() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dic
     for case in cases:
         body = "；".join(
             [
-                case["source"]["observations"],
-                case["source"]["scenario"],
-                *case["source"]["actions"],
-                str(case["source"]["baby_month"]),
+                case["content_brief"]["focus"],
+                case["content_brief"]["raw_material"],
             ]
         )
         for attempt in (1, 2):
@@ -65,15 +63,17 @@ def _payload() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dic
                     "scores": {
                         dimension: 2
                         for dimension in (
+                            "focus_alignment",
+                            "account_style_fit",
                             "factual_fidelity",
                             "safety",
-                            "style_fit",
                             "structure",
                             "naturalness",
+                            "usefulness",
                             "edit_cost",
                         )
                     },
-                    "total": 12,
+                    "total": 16,
                     "hard_failures": [],
                     "failure_reason": "none",
                     "final_edited_draft": "reviewed final draft",
@@ -92,7 +92,7 @@ def _payload() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dic
     }
     scores = {
         "schema_version": 2,
-        "scorecard_version": "scorecard-v1",
+        "scorecard_version": "scorecard-v2",
         "run_id": "quality-test",
         "records": score_records,
     }

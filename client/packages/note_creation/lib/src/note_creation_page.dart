@@ -34,44 +34,41 @@ class NoteCreationPage extends StatefulWidget {
 
 class _NoteCreationPageState extends State<NoteCreationPage> {
   // Controller 保存输入框内容，_draftStore 保存“请求尚未完成时”的本地草稿。
-  final _scenarioController = TextEditingController();
-  final _actionsController = TextEditingController();
-  final _observationsController = TextEditingController();
-  final _notesController = TextEditingController();
+  final _focusController = TextEditingController();
+  final _rawMaterialController = TextEditingController();
   final _picker = ImagePicker();
   final _pickedPaths = <String>[];
-  int _babyMonth = 19;
   StyleForm _selectedForm = StyleForm.experience;
   bool _loading = false;
   String? _error;
   String? _activeRunId;
-  String? _agentPhase;
-  String? _agentSummary;
   String? _failedRunId;
   StyleForm? _lastForm;
-  final _draftStore = SourceExperienceDraftStore();
+  final _contentBriefStore = ContentBriefDraftStore();
+  final _legacyDraftStore = SourceExperienceDraftStore();
 
   @override
   void initState() {
     super.initState();
-    // 页面重新打开时先恢复上次未完成的 SourceExperience。
+    // 页面重新打开时只恢复标题和正文，避免把旧的育儿拆分表单重新带回页面。
     _restoreDraft();
   }
 
   Future<void> _restoreDraft() async {
-    // 恢复草稿是异步的，所以回写 UI 前必须确认 State 仍挂在 widget tree 上。
-    final draft = await _draftStore.load();
+    var draft = await _contentBriefStore.load();
+    if (draft == null) {
+      final legacy = await _legacyDraftStore.load();
+      if (legacy != null) draft = ContentBrief.fromLegacy(legacy);
+    }
     if (!mounted || draft == null) return;
-    _scenarioController.text = draft.scenario;
-    _actionsController.text = draft.actions.join('，');
-    _observationsController.text = draft.observations;
-    _notesController.text = draft.notes;
-    setState(() {
-      _babyMonth = draft.babyMonth;
-      _pickedPaths
+    final restored = draft;
+    _focusController.text = restored.focus;
+    _rawMaterialController.text = restored.rawMaterial;
+    setState(
+      () => _pickedPaths
         ..clear()
-        ..addAll(draft.assetIds);
-    });
+        ..addAll(restored.assetIds),
+    );
   }
 
   Future<void> _pickImages() async {
@@ -89,19 +86,22 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
 
   @override
   void dispose() {
-    _scenarioController.dispose();
-    _actionsController.dispose();
-    _observationsController.dispose();
-    _notesController.dispose();
+    _focusController.dispose();
+    _rawMaterialController.dispose();
     super.dispose();
   }
 
   Future<void> _generate() async {
-    // 生成主链路：校验输入 → 上传素材 → 组装 SourceExperience → 保存本地草稿 → 请求 Agent。
+    // 生成主链路：校验输入 → 上传素材 → 组装 ContentBrief → 保存本地草稿 → 请求服务端。
     // 在请求成功前不清除本地草稿，避免网络或模型失败导致用户输入丢失。
-    if (_scenarioController.text.trim().isEmpty ||
-        _actionsController.text.trim().isEmpty) {
-      setState(() => _error = '请先填写发生了什么和你做了什么');
+    final focus = _focusController.text.trim().isNotEmpty
+        ? _focusController.text.trim()
+        : '';
+    final rawMaterial = _rawMaterialController.text.trim().isNotEmpty
+        ? _rawMaterialController.text.trim()
+        : '';
+    if (focus.isEmpty || rawMaterial.isEmpty) {
+      setState(() => _error = '请先填写内容主题和原始素材');
       return;
     }
     setState(() {
@@ -118,44 +118,28 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
         }
         assetIds.add(await widget.uploadAsset!(path));
       }
-      final source = SourceExperience(
-        babyMonth: _babyMonth,
-        scenario: _scenarioController.text.trim(),
-        actions: _actionsController.text
-            .split(RegExp(r'[,，\n]'))
-            .map((action) => action.trim())
-            .where((action) => action.isNotEmpty)
-            .toList(),
-        observations: _observationsController.text.trim(),
-        notes: _notesController.text.trim(),
+      final brief = ContentBrief(
+        focus: focus,
+        rawMaterial: rawMaterial,
         assetIds: assetIds,
       );
       _lastForm = _selectedForm;
       _failedRunId = null;
-      await _draftStore.save(source);
+      await _contentBriefStore.save(brief);
       // generate 是依赖注入进来的 Future：测试时可以替换成 fake，生产时由 API Client 实现。
       final response = widget.generateWithProgress == null
-          ? await widget.generate(source, _selectedForm)
+          ? await widget.generate(brief, _selectedForm)
           : await widget.generateWithProgress!(
-              source,
+              brief,
               _selectedForm,
               onRunCreated: (run) {
                 if (!mounted) return;
                 runIdForRecovery = run.runId;
                 _activeRunId = run.runId;
-                setState(() {
-                  _agentPhase = run.currentPhase;
-                });
-              },
-              onEvent: (event) {
-                if (!mounted) return;
-                setState(() {
-                  _agentPhase = event.phase;
-                  _agentSummary = event.summary;
-                });
               },
             );
-      await _draftStore.clear();
+      await _contentBriefStore.clear();
+      await _legacyDraftStore.clear();
       _failedRunId = null;
       await _openGeneratedNote(response, _selectedForm);
     } catch (error) {
@@ -175,7 +159,7 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
     StyledNoteResponse response,
     StyleForm form,
   ) async {
-    // 只有服务端生成成功才进入编辑器；response 同时携带 draft 和 agentTrace。
+    // 只有服务端生成成功才进入编辑器；内部运行摘要不属于主创作页面。
     if (!mounted) return;
     if (widget.onDraftGenerated != null) {
       await widget.onDraftGenerated!(response, form);
@@ -185,7 +169,6 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
           builder: (_) => NoteEditorPage(
             draft: response.draft,
             aiBaseline: response.draft,
-            agentTrace: response.agentTrace,
             styleForm: form,
           ),
         ),
@@ -211,19 +194,10 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
         onRunCreated: (run) {
           if (!mounted) return;
           _activeRunId = run.runId;
-          setState(() {
-            _agentPhase = run.currentPhase;
-          });
-        },
-        onEvent: (event) {
-          if (!mounted) return;
-          setState(() {
-            _agentPhase = event.phase;
-            _agentSummary = event.summary;
-          });
         },
       );
-      await _draftStore.clear();
+      await _contentBriefStore.clear();
+      await _legacyDraftStore.clear();
       _failedRunId = null;
       await _openGeneratedNote(response, _lastForm ?? _selectedForm);
     } catch (error) {
@@ -261,39 +235,29 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('记录一次育儿经历')),
+      appBar: AppBar(title: const Text('新建内容')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          Text('宝宝月龄：$_babyMonth 个月'),
-          Slider(
-            value: _babyMonth.toDouble(),
-            min: 0,
-            max: 24,
-            divisions: 24,
-            onChanged: (value) => setState(() => _babyMonth = value.round()),
-          ),
+          Text('标题', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
           TextField(
-            controller: _scenarioController,
-            decoration: const InputDecoration(labelText: '发生了什么'),
+            controller: _focusController,
+            decoration: const InputDecoration(
+              labelText: '内容主题',
+              hintText: '例如：宝宝周岁宴',
+            ),
           ),
           const SizedBox(height: 12),
+          Text('正文', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
           TextField(
-            controller: _actionsController,
-            maxLines: 3,
-            decoration: const InputDecoration(labelText: '我做了什么（可用逗号分隔）'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _observationsController,
-            maxLines: 3,
-            decoration: const InputDecoration(labelText: '观察到什么变化'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _notesController,
-            maxLines: 3,
-            decoration: const InputDecoration(labelText: '补充说明'),
+            controller: _rawMaterialController,
+            maxLines: 5,
+            decoration: const InputDecoration(
+              labelText: '原始正文',
+              hintText: '把想表达的内容一次写下来，事实、过程、感受都可以放在这里',
+            ),
           ),
           const SizedBox(height: 16),
           Row(
@@ -413,14 +377,6 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
           ],
           if (_loading && widget.generateWithProgress != null) ...[
             const SizedBox(height: 12),
-            Text(
-              [
-                if (_agentPhase != null) '阶段：$_agentPhase',
-                ?_agentSummary,
-              ].join(' · '),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
             if (_activeRunId != null && widget.cancelAgentRun != null)
               TextButton.icon(
                 onPressed: _cancelGeneration,

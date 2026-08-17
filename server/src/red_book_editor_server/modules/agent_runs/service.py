@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -23,7 +22,14 @@ from red_book_editor_server.domain.agent_runs import (
     AgentRunLifecycleStatus,
     AgentRunRecord,
 )
-from red_book_editor_server.domain.contracts import NoteDraftDto, NoteStatus, StyleForm
+from red_book_editor_server.domain.contracts import (
+    ContentBriefDto,
+    NoteDraftDto,
+    NoteStatus,
+    SourceExperienceDto,
+    StyleForm,
+)
+from red_book_editor_server.domain.ports import ModelGatewayError
 from red_book_editor_server.infrastructure.repositories import (
     SqlAlchemyAccountColumnContextRepository,
     SqlAlchemyAgentRunRepository,
@@ -162,6 +168,7 @@ class AgentRunCoordinator:
                 result = await service.generate(
                     account_id=record.account_id,
                     column_id=record.column_id,
+                    brief=note.content_brief,
                     source=note.source,
                     form=record.form,
                     cancel_check=cancel_check,
@@ -201,6 +208,14 @@ class AgentRunCoordinator:
         except AgentRunError as error:
             if record is not None:
                 await self._finish_agent_error(record, error)
+        except ModelGatewayError as error:
+            if record is not None:
+                summary = (
+                    "模型配置缺失：请在 server/.env 中配置 DEEPSEEK_API_KEY"
+                    if str(error) == "model_api_key_missing"
+                    else "模型请求失败，请检查 DeepSeek 配置和网络连接"
+                )
+                await self._finish_failure(record, AgentFailureCode.MODEL_ERROR, summary)
         except Exception as error:  # pragma: no cover - defensive worker boundary
             if record is not None:
                 await self._finish_failure(record, AgentFailureCode.UNEXPECTED_ERROR, str(error))
@@ -390,13 +405,21 @@ class AgentRunCoordinator:
 
 
 def placeholder_note(
-    *, account_id: UUID, column_id: UUID, source: Any, form: StyleForm
+    *,
+    account_id: UUID,
+    column_id: UUID,
+    brief: ContentBriefDto | None = None,
+    source: SourceExperienceDto | None = None,
+    form: StyleForm,
 ) -> NoteDraftDto:
+    if brief is None and source is None:
+        raise ValueError("content_brief_required")
     return NoteDraftDto(
         note_id=uuid4(),
         account_id=account_id,
         column_id=column_id,
         status=NoteStatus.DRAFT,
+        content_brief=brief,
         source=source,
         style_form=form,
         updated_at=datetime.now(UTC),

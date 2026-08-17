@@ -4,7 +4,11 @@ import json
 import re
 
 from red_book_editor_server.domain.agent import AgentPhase, Tool
-from red_book_editor_server.domain.contracts import SourceExperienceDto, StyleProfile
+from red_book_editor_server.domain.contracts import (
+    ContentBriefDto,
+    SourceExperienceDto,
+    StyleProfile,
+)
 from red_book_editor_server.modules.content_workflow.styling.decorator import (
     _contains_fact,
     _required_facts,
@@ -77,6 +81,10 @@ def build_styling_tools() -> list[Tool]:
                             "body": {"type": "string"},
                             "hashtags": {"type": "array", "items": {"type": "string"}},
                             "cover_copy": {"type": "string"},
+                            "image_suggestions": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
                         },
                     },
                     "source": {"type": "object"},
@@ -126,7 +134,8 @@ async def suggest_tags_tool(args: dict[str, object]) -> str:
     topic = parsed.topic
     precise = [tag for tag in profile.tags.precise if _tag_matches(tag, topic)]
     trending = [tag for tag in profile.tags.trending if _tag_matches(tag, topic)]
-    combined = [*profile.tags.generic, *precise, *trending]
+    topic_tag = _topic_tag(topic)
+    combined = [topic_tag, *precise, *trending, *profile.tags.generic]
     deduped = list(dict.fromkeys(tag.lstrip("#") for tag in combined))
     max_tags = profile.rich_text.tag_count_range[1]
     return json.dumps([f"#{tag}" for tag in deduped[:max_tags]], ensure_ascii=False)
@@ -137,7 +146,16 @@ async def critique_draft_tool(args: dict[str, object]) -> str:
     parsed = CritiqueArgs.model_validate(args)
     profile = load_style_profile(parsed.form)
     draft = parsed.draft
-    text = "\n".join([draft.topic_angle, *draft.title_candidates, draft.body, *draft.hashtags])
+    text = "\n".join(
+        [
+            draft.topic_angle,
+            *draft.title_candidates,
+            draft.body,
+            *draft.hashtags,
+            draft.cover_copy,
+            *draft.image_suggestions,
+        ]
+    )
     issues: list[str] = []
 
     hook = _score_hook(draft.title_candidates)
@@ -148,6 +166,34 @@ async def critique_draft_tool(args: dict[str, object]) -> str:
     issues.extend(tone_issues)
     issues.extend(fact_issues)
     issues.extend(rich_issues)
+    focus = (
+        parsed.source.focus
+        if isinstance(parsed.source, ContentBriefDto)
+        else parsed.source.scenario
+    )
+    material = (
+        parsed.source.raw_material
+        if isinstance(parsed.source, ContentBriefDto)
+        else "；".join([*parsed.source.actions, parsed.source.observations, parsed.source.notes])
+    ).strip()
+    if len(draft.title_candidates) < 3:
+        issues.append("标题候选至少需要 3 个")
+    if not any(_compact(focus) in _compact(title) for title in draft.title_candidates):
+        issues.append("标题候选必须明确围绕内容主题")
+    if _compact(focus) not in _compact(draft.topic_angle):
+        issues.append("选题角度必须明确围绕内容主题")
+    if len(draft.body) < max(100, len(material) * 2):
+        issues.append("正文过短，必须保留原始素材的完整信息并展开过程细节")
+    if not draft.cover_copy.strip() or _compact(draft.cover_copy) == _compact(focus):
+        issues.append("封面文案不能只重复内容主题")
+    if _compact(focus) not in _compact(draft.cover_copy):
+        issues.append("封面文案必须包含内容主题并补充具体角度")
+    if not any(_compact(focus) in _compact(tag) for tag in draft.hashtags):
+        issues.append("至少要有一个话题直接对应内容主题")
+    if len(draft.image_suggestions) < 3:
+        issues.append("配图建议至少需要 3 条具体建议")
+    if not any(_compact(focus) in _compact(item) for item in draft.image_suggestions):
+        issues.append("至少要有一条配图建议直接对应内容主题")
 
     # 事实分数和各风格分项都达到门槛后，模型才被允许继续 finalize。
     passed = not issues and facts_score >= 4 and min(hook, structure, tone_score, rich_score) >= 3
@@ -204,7 +250,7 @@ def _score_tone(profile: StyleProfile, text: str) -> tuple[int, list[str]]:
     return score, issues
 
 
-def _score_facts(source: SourceExperienceDto, text: str) -> tuple[int, list[str]]:
+def _score_facts(source: ContentBriefDto | SourceExperienceDto, text: str) -> tuple[int, list[str]]:
     # 当前版本使用关键事实的文本匹配，优点是简单可解释，缺点是对同义改写不够宽容。
     # 这正是后续引入 Source Fact Ledger 时需要替换/增强的地方。
     missing = [fact for fact in _required_facts(source) if not _contains_fact(fact, text)]
@@ -231,3 +277,12 @@ def _tag_matches(tag: str, topic: str) -> bool:
     if not clean_topic:
         return False
     return clean_topic in tag or tag in clean_topic
+
+
+def _compact(value: str) -> str:
+    return re.sub(r"[\s，。！？、,.!?；;：:（）()\[\]【】]", "", value)
+
+
+def _topic_tag(topic: str) -> str:
+    clean = re.sub(r"[\s，。！？、,.!?；;：:（）()\[\]【】#]", "", topic)
+    return clean[:24] or "真实记录"

@@ -76,7 +76,7 @@ def test_agent_run_persists_progress_and_supports_sse_cursor(client: TestClient)
 
     draft = client.get(f"/api/v1/notes/{run['note_id']}")
     assert draft.status_code == 200
-    assert draft.json()["review"] is not None
+    assert "review" not in draft.json()
     assert draft.json()["status"] == "ready"
 
     events = client.get(f"/api/v1/agent-runs/{run['run_id']}/events")

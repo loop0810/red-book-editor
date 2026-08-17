@@ -57,6 +57,14 @@ def create_app() -> FastAPI:
     async def ready() -> dict[str, str] | JSONResponse:
         if not hasattr(application.state, "settings"):
             return JSONResponse(status_code=503, content={"status": "not_ready"})
-        return {"status": "ready"}
+        settings = application.state.settings
+        return {
+            "status": "ready",
+            "model_provider": settings.model_provider,
+            "model": settings.deepseek_model if settings.model_provider == "deepseek" else "none",
+            "model_configured": str(
+                settings.model_provider != "deepseek" or bool(settings.model_api_key)
+            ).lower(),
+        }
 
     return application

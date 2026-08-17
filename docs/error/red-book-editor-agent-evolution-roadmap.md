@@ -157,3 +157,10 @@ Domain Strategy Pack 至少包含：
 - 学习记录可以保留历史过程，但必须标明它不等于当前产品契约；
 - 归档 change 和 `docs/error/change-fix-history.md` 是历史记录，不用回写成当前实现；
 - 每个 change 完成并归档后，按项目约束同步修复历史和创建 Git commit。
+
+## 8. 本轮未覆盖项
+
+- 当前只接入 parenting Domain Strategy Pack，尚未实现第二个真实领域及其独立安全评测。
+- 账号设置页已经通过真实 API 保存账号定位、语气和宝宝月龄，但栏目启用/停用控件仍是静态占位，尚未接入服务端栏目管理。
+- 真实 DeepSeek 基线和人工评分需要外部模型凭据，本轮未运行；评测样例、scorecard 和 manifest 已完成同步并通过本地校验。
+- 内部诊断继续保存在服务端模型和 AgentRun 路径，本轮没有新增独立的授权诊断接口。

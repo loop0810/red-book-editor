@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
 from red_book_editor_server.domain.contracts import (
+    ContentBriefDto,
     EditableField,
     FieldSuggestionDto,
+    NoteDraftDto,
+    NoteStatus,
     ReviewFindingDto,
+    ReviewResultDto,
     RiskLevel,
     SourceExperienceDto,
     SuggestionStatus,
+    UserResultResponseDto,
 )
 
 
@@ -66,3 +72,28 @@ def test_review_finding_accepts_legacy_payload_without_field() -> None:
 
     assert finding.field is None
     assert finding.matched_text == "旧文本"
+
+
+def test_content_brief_is_the_generic_input_and_public_result_hides_review() -> None:
+    brief = ContentBriefDto(
+        focus="宝宝周岁宴",
+        raw_material="不办大型酒宴，只和家人吃顿饭。",
+        domain_context={"baby_month": 12},
+    )
+    draft = NoteDraftDto(
+        note_id=uuid4(),
+        account_id=uuid4(),
+        column_id=uuid4(),
+        status=NoteStatus.READY,
+        content_brief=brief,
+        title_candidates=["宝宝周岁宴：和家人吃顿饭"],
+        body="记录这次简单的周岁宴。",
+        review=ReviewResultDto(passed=True),
+        updated_at=datetime(2026, 8, 16, tzinfo=UTC),
+    )
+
+    payload = UserResultResponseDto.from_draft(draft).model_dump(mode="json")
+
+    assert payload["draft"]["content_brief"]["focus"] == "宝宝周岁宴"
+    assert "review" not in payload["draft"]
+    assert "agent_trace" not in payload

@@ -13,8 +13,14 @@ final apiClientProvider = Provider<RedBookEditorApiClient>(
   (ref) => RedBookEditorApiClient(),
 );
 
-const _accountId = '00000000-0000-0000-0000-000000000001';
-const _defaultColumnId = '669ad3c7-653a-4f62-b6ae-51cd365fbcdd';
+final accountsProvider = FutureProvider<List<AccountProfile>>(
+  (ref) => ref.read(apiClientProvider).listAccounts(),
+);
+
+final columnsProvider = FutureProvider.family<List<ContentColumn>, String>(
+  (ref, accountId) =>
+      ref.read(apiClientProvider).listColumns(accountId: accountId),
+);
 
 final _router = GoRouter(
   routes: [
@@ -24,7 +30,7 @@ final _router = GoRouter(
 
 void main() {
   // ProviderScope 是 Riverpod 的根容器；放在最外层后，下面所有页面都能读取 provider。
-  runApp(const ProviderScope(child: RedBookEditorApp()));
+  runApp(const RedBookEditorApp());
 }
 
 class RedBookEditorApp extends StatelessWidget {
@@ -32,18 +38,28 @@ class RedBookEditorApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      title: '小红书内容工作台',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
+    return ProviderScope(
+      child: MaterialApp.router(
+        title: '小红书内容工作台',
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
+        ),
+        routerConfig: _router,
       ),
-      routerConfig: _router,
     );
   }
 }
 
-class WorkbenchHomePage extends ConsumerWidget {
+class WorkbenchHomePage extends ConsumerStatefulWidget {
   const WorkbenchHomePage({super.key});
+
+  @override
+  ConsumerState<WorkbenchHomePage> createState() => _WorkbenchHomePageState();
+}
+
+class _WorkbenchHomePageState extends ConsumerState<WorkbenchHomePage> {
+  String? _selectedAccountId;
+  String? _selectedColumnId;
 
   Future<void> _openEditor(
     BuildContext context,
@@ -102,35 +118,124 @@ class WorkbenchHomePage extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    final accounts = ref.watch(accountsProvider);
+    if (accounts.isLoading) {
+      return const Scaffold(
+        appBar: _WorkbenchAppBar(),
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (accounts.hasError || accounts.valueOrNull == null) {
+      return const Scaffold(
+        appBar: _WorkbenchAppBar(),
+        body: Center(child: Text('暂时无法读取账号配置，请稍后重试')),
+      );
+    }
+    final account =
+        accounts.value!
+            .where((item) => item.accountId == _selectedAccountId)
+            .firstOrNull ??
+        (accounts.value!.isEmpty ? null : accounts.value!.first);
+    if (account == null) {
+      return Scaffold(
+        appBar: const _WorkbenchAppBar(),
+        body: _EmptyAccountState(
+          onCreate: () => _openFirstAccountSetup(context, ref),
+        ),
+      );
+    }
+    final columns = ref.watch(columnsProvider(account.accountId));
+    if (columns.isLoading) {
+      return const Scaffold(
+        appBar: _WorkbenchAppBar(),
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (columns.hasError || columns.valueOrNull == null) {
+      return const Scaffold(
+        appBar: _WorkbenchAppBar(),
+        body: Center(child: Text('暂时无法读取账号栏目，请稍后重试')),
+      );
+    }
+    final column =
+        columns.value!
+            .where((item) => item.columnId == _selectedColumnId)
+            .firstOrNull ??
+        (columns.value!.isEmpty ? null : columns.value!.first);
+    if (column == null) {
+      return Scaffold(
+        appBar: const _WorkbenchAppBar(),
+        body: _EmptyColumnState(
+          onCreate: () => _createDefaultColumn(context, ref, account.accountId),
+        ),
+      );
+    }
+    final accountId = account.accountId;
+    final columnId = column.columnId;
     return Scaffold(
       appBar: AppBar(title: const Text('小红书内容工作台')),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            DropdownButtonFormField<String>(
+              initialValue: account.accountId,
+              decoration: const InputDecoration(labelText: '账号'),
+              items: [
+                for (final item in accounts.value!)
+                  DropdownMenuItem(
+                    value: item.accountId,
+                    child: Text(item.positioning),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  _selectedAccountId = value;
+                  _selectedColumnId = null;
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: column.columnId,
+              decoration: const InputDecoration(labelText: '栏目'),
+              items: [
+                for (final item in columns.value!)
+                  DropdownMenuItem(
+                    value: item.columnId,
+                    child: Text(item.name),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() => _selectedColumnId = value);
+              },
+            ),
+            const SizedBox(height: 20),
             FilledButton.icon(
               onPressed: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => NoteCreationPage(
-                      generate: (source, form) => ref
+                      generate: (contentBrief, form) => ref
                           .read(apiClientProvider)
-                          // 这里是客户端主链路的起点：页面表单产生 source/form，
+                          // 这里是客户端主链路的起点：页面表单产生 ContentBrief/form，
                           // API Client 将它们编码成 POST /notes/generate 请求。
                           .generateNote(
-                            accountId: _accountId,
-                            columnId: _defaultColumnId,
-                            source: source,
+                            accountId: accountId,
+                            columnId: columnId,
+                            contentBrief: contentBrief,
                             form: form,
                           ),
                       generateWithProgress:
-                          (source, form, {onEvent, onRunCreated}) => ref
+                          (contentBrief, form, {onEvent, onRunCreated}) => ref
                               .read(apiClientProvider)
                               .generateNoteWithProgress(
-                                accountId: _accountId,
-                                columnId: _defaultColumnId,
-                                source: source,
+                                accountId: accountId,
+                                columnId: columnId,
+                                contentBrief: contentBrief,
                                 form: form,
                                 onEvent: onEvent,
                                 onRunCreated: onRunCreated,
@@ -148,18 +253,17 @@ class WorkbenchHomePage extends ConsumerWidget {
                       uploadAsset: (filePath) => ref
                           .read(apiClientProvider)
                           .uploadAsset(
-                            accountId: _accountId,
+                            accountId: accountId,
                             filePath: filePath,
                           ),
                       onDraftGenerated: (response, selectedForm) async {
                         // 服务端返回的是 StyledNoteResponse：draft 是可编辑内容，
-                        // agentTrace 是可展示的执行摘要；两者一起交给编辑器页面。
+                        // 只把用户结果交给编辑器；运行 trace 留在服务端内部诊断。
                         await Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => NoteEditorPage(
                               draft: response.draft,
                               aiBaseline: response.draft,
-                              agentTrace: response.agentTrace,
                               styleForm: selectedForm,
                               onRegenerateField: (current, field, {form}) => ref
                                   .read(apiClientProvider)
@@ -199,7 +303,7 @@ class WorkbenchHomePage extends ConsumerWidget {
                 );
               },
               icon: const Icon(Icons.add),
-              label: const Text('新建育儿笔记'),
+              label: const Text('新建内容'),
             ),
             const SizedBox(height: 12),
             OutlinedButton.icon(
@@ -208,7 +312,7 @@ class WorkbenchHomePage extends ConsumerWidget {
                   builder: (_) => DraftListPage(
                     listDrafts: () => ref
                         .read(apiClientProvider)
-                        .listNotes(accountId: _accountId),
+                        .listNotes(accountId: accountId),
                     onOpenDraft: (draft) => _openEditor(context, ref, draft),
                   ),
                 ),
@@ -223,11 +327,11 @@ class WorkbenchHomePage extends ConsumerWidget {
                   builder: (_) => AssetLibraryPage(
                     listAssets: () => ref
                         .read(apiClientProvider)
-                        .listAssets(accountId: _accountId),
+                        .listAssets(accountId: accountId),
                     uploadAsset: (filePath, onProgress) => ref
                         .read(apiClientProvider)
                         .uploadAsset(
-                          accountId: _accountId,
+                          accountId: accountId,
                           filePath: filePath,
                           onProgress: onProgress,
                         ),
@@ -237,7 +341,7 @@ class WorkbenchHomePage extends ConsumerWidget {
                     reorderAssets: (assetIds) => ref
                         .read(apiClientProvider)
                         .reorderAssets(
-                          accountId: _accountId,
+                          accountId: accountId,
                           assetIds: assetIds,
                         ),
                     downloadAsset: (assetId) => ref
@@ -257,7 +361,38 @@ class WorkbenchHomePage extends ConsumerWidget {
             const SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const AccountWorkspacePage()),
+                MaterialPageRoute(
+                  builder: (_) => AccountWorkspacePage(
+                    accountId: account.accountId,
+                    domainId: account.domainId,
+                    initialPositioning: account.positioning,
+                    initialTone: account.tone,
+                    initialBabyMonth: account.currentBabyMonth ?? 19,
+                    onSave:
+                        ({
+                          required accountId,
+                          required positioning,
+                          required tone,
+                          required currentBabyMonth,
+                        }) async {
+                          await ref
+                              .read(apiClientProvider)
+                              .updateAccount(
+                                account: AccountProfile(
+                                  accountId: account.accountId,
+                                  domainId: account.domainId,
+                                  positioning: positioning,
+                                  tone: tone,
+                                  domainContext: account.domainContext,
+                                  currentBabyMonth: currentBabyMonth,
+                                  boundaries: account.boundaries,
+                                  commonExpressions: account.commonExpressions,
+                                ),
+                              );
+                          ref.invalidate(accountsProvider);
+                        },
+                  ),
+                ),
               ),
               icon: const Icon(Icons.settings),
               label: const Text('账号配置'),
@@ -267,4 +402,134 @@ class WorkbenchHomePage extends ConsumerWidget {
       ),
     );
   }
+
+  Future<void> _openFirstAccountSetup(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    AccountProfile? createdAccount;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AccountWorkspacePage(
+          accountId: null,
+          domainId: 'parenting',
+          initialPositioning: '记录真实育儿生活',
+          initialTone: '真实、自然、少一点说教',
+          initialBabyMonth: 0,
+          onSave:
+              ({
+                required accountId,
+                required positioning,
+                required tone,
+                required currentBabyMonth,
+              }) async {
+                final api = ref.read(apiClientProvider);
+                createdAccount ??= await api.createAccount(
+                  account: AccountProfile(
+                    accountId: '',
+                    domainId: 'parenting',
+                    positioning: positioning,
+                    tone: tone,
+                    currentBabyMonth: currentBabyMonth,
+                  ),
+                );
+                await api.createColumn(
+                  accountId: createdAccount!.accountId,
+                  name: '日常分享',
+                  description: '记录真实经历与实用经验',
+                  contentTypes: const ['note'],
+                );
+                ref.invalidate(accountsProvider);
+              },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _createDefaultColumn(
+    BuildContext context,
+    WidgetRef ref,
+    String accountId,
+  ) async {
+    try {
+      await ref
+          .read(apiClientProvider)
+          .createColumn(
+            accountId: accountId,
+            name: '日常分享',
+            description: '记录真实经历与实用经验',
+            contentTypes: const ['note'],
+          );
+      ref.invalidate(columnsProvider(accountId));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('创建栏目失败：$error')));
+    }
+  }
+}
+
+class _EmptyAccountState extends StatelessWidget {
+  const _EmptyAccountState({required this.onCreate});
+
+  final VoidCallback onCreate;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('还没有配置账号'),
+          const SizedBox(height: 8),
+          const Text('当前版本是本地内容工作台，无需注册或登录。先配置账号定位即可开始创作。'),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: onCreate,
+            icon: const Icon(Icons.person_add_alt_1),
+            label: const Text('配置第一个账号'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _EmptyColumnState extends StatelessWidget {
+  const _EmptyColumnState({required this.onCreate});
+
+  final VoidCallback onCreate;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('账号还没有内容栏目'),
+          const SizedBox(height: 8),
+          const Text('创建一个默认栏目后，就可以开始生成内容。'),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: onCreate,
+            icon: const Icon(Icons.add),
+            label: const Text('创建默认栏目'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _WorkbenchAppBar extends StatelessWidget implements PreferredSizeWidget {
+  const _WorkbenchAppBar();
+
+  @override
+  Widget build(BuildContext context) => AppBar(title: const Text('小红书内容工作台'));
+
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 }

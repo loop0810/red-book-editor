@@ -80,13 +80,6 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
 
   NoteDraft get _draft => _session.draft;
 
-  bool get _hasBlockingReview => _draft.reviewFindings.any(
-    // blocking 风险只影响“是否允许继续导出/发布”，不等于页面不能继续编辑。
-    (finding) => finding.level == RiskLevel.blocking,
-  );
-
-  bool get _needsReview => _draft.status == NoteStatus.needsReview;
-
   @override
   void initState() {
     super.initState();
@@ -99,7 +92,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
     );
     _titleController = TextEditingController(
       text: _draft.titleCandidates.isEmpty
-          ? _draft.source.scenario
+          ? _draft.focus
           : _draft.titleCandidates.first,
     );
     _bodyController = TextEditingController(text: _draft.body);
@@ -208,7 +201,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
       pendingSuggestions: _session.pendingSuggestions,
     );
     _titleController.text = draft.titleCandidates.isEmpty
-        ? draft.source.scenario
+        ? draft.focus
         : draft.titleCandidates.first;
     _bodyController.text = draft.body;
     _hashtagsController.text = draft.hashtags.join(' ');
@@ -342,7 +335,7 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
 
   void _writeDraftToControllers(NoteDraft draft) {
     _titleController.text = draft.titleCandidates.isEmpty
-        ? draft.source.scenario
+        ? draft.focus
         : draft.titleCandidates.first;
     _bodyController.text = draft.body;
     _hashtagsController.text = draft.hashtags.join(' ');
@@ -389,19 +382,6 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
         return '封面文案';
       default:
         return field;
-    }
-  }
-
-  void _focusFinding(String? field) {
-    if (field == null) return;
-    final editableField = editableFieldFromApi(field);
-    _fieldFocusNodes[editableField]?.requestFocus();
-    final target = _fieldKeys[editableField]?.currentContext;
-    if (target != null) {
-      Scrollable.ensureVisible(
-        target,
-        duration: const Duration(milliseconds: 240),
-      );
     }
   }
 
@@ -693,69 +673,18 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
   }
 
   Widget _reviewBanner(BuildContext context) {
-    if (_hasBlockingReview) {
+    final issue = _draft.userIssue;
+    if (issue != null) {
       return Card(
         color: Theme.of(context).colorScheme.errorContainer,
-        child: const ListTile(
-          leading: Icon(Icons.block),
-          title: Text('这篇内容需要修改后才能导出'),
-          subtitle: Text('请检查疾病判断、用药或未经经历支持的表述。'),
-        ),
-      );
-    }
-    final warningFindings = _draft.reviewFindings
-        .where((finding) => finding.level == RiskLevel.warning)
-        .toList();
-    if (warningFindings.isNotEmpty) {
-      return Card(
-        color: Theme.of(context).colorScheme.secondaryContainer,
-        child: const ListTile(
-          leading: Icon(Icons.info_outline),
-          title: Text('有提示级问题，发布前请人工确认'),
-        ),
-      );
-    }
-    if (_needsReview) {
-      return const Card(
         child: ListTile(
-          leading: Icon(Icons.rate_review_outlined),
-          title: Text('审核状态：待复核'),
-          subtitle: Text('审核结果尚未通过，请确认内容后再继续使用。'),
+          leading: const Icon(Icons.warning_amber_rounded),
+          title: Text(issue.message),
+          subtitle: issue.action == null ? null : Text(issue.action!),
         ),
       );
     }
     return const SizedBox.shrink();
-  }
-
-  String _traceLabel(AgentTraceStep step) {
-    // 服务端 trace 使用稳定的机器 label；这里把它翻译成用户能看懂的中文阶段名。
-    switch (step.label) {
-      case 'load_style_profile':
-        return '读取风格档案';
-      case 'suggest_tags':
-        return '生成话题建议';
-      case 'critique_draft':
-        return '自评草稿';
-      case 'finalize_note':
-        return '确认最终输出';
-      case 'model':
-        return '模型思考';
-      case 'stub_fallback':
-        return '未调用模型';
-      default:
-        return step.label;
-    }
-  }
-
-  String _claimSupportLabel(ClaimSupport support) {
-    switch (support) {
-      case ClaimSupport.supported:
-        return '有来源支持';
-      case ClaimSupport.uncertain:
-        return '来源不确定';
-      case ClaimSupport.unsupported:
-        return '未找到来源支持';
-    }
   }
 
   @override
@@ -776,31 +705,6 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
         padding: const EdgeInsets.all(20),
         children: [
           reviewBanner,
-          if (widget.agentTrace.isNotEmpty)
-            Card(
-              child: ExpansionTile(
-                leading: const Icon(Icons.psychology),
-                title: const Text('Agent 执行过程'),
-                subtitle: Text('共 ${widget.agentTrace.length} 步'),
-                children: [
-                  for (final step in widget.agentTrace)
-                    ListTile(
-                      dense: true,
-                      leading: Icon(
-                        step.kind == 'tool'
-                            ? Icons.build_circle_outlined
-                            : Icons.psychology_outlined,
-                      ),
-                      title: Text('${step.order}. ${_traceLabel(step)}'),
-                      subtitle: Text(
-                        step.summary,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                ],
-              ),
-            ),
           Container(
             key: _fieldKeys[EditableField.title],
             child: TextField(
@@ -888,43 +792,6 @@ class _NoteEditorPageState extends State<NoteEditorPage> {
               title: const Text('配图建议'),
               subtitle: Text(_draft.imageSuggestions.join('、')),
             ),
-          if (_draft.reviewFindings.isNotEmpty)
-            ..._draft.reviewFindings.map(
-              (finding) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  finding.level == RiskLevel.blocking
-                      ? Icons.block
-                      : Icons.info_outline,
-                ),
-                title: Text(finding.message),
-                subtitle: finding.matchedText == null
-                    ? null
-                    : Text('命中：${finding.matchedText}'),
-                onTap: finding.field == null
-                    ? null
-                    : () => _focusFinding(finding.field),
-              ),
-            ),
-          if (_draft.review != null)
-            ..._draft.review!.claimAudit
-                .where((item) => item.support != ClaimSupport.supported)
-                .map(
-                  (item) => ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      item.level == RiskLevel.blocking
-                          ? Icons.block
-                          : Icons.info_outline,
-                    ),
-                    title: Text(_claimSupportLabel(item.support)),
-                    subtitle: Text(
-                      item.reason.isEmpty
-                          ? item.claim
-                          : '${item.claim}\n${item.reason}',
-                    ),
-                  ),
-                ),
           const SizedBox(height: 12),
           Row(
             children: [

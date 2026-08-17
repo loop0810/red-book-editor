@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class NoteStatus(StrEnum):
@@ -31,6 +32,7 @@ class FactKind(StrEnum):
     CONFIRMED = "confirmed"
     OBSERVED = "observed"
     OPINION = "opinion"
+    CONSTRAINT = "constraint"
     UNKNOWN = "unknown"
     FORBIDDEN_INFERENCE = "forbidden_inference"
 
@@ -55,6 +57,61 @@ class SuggestionStatus(StrEnum):
     STALE = "stale"
 
 
+class UserIssueCategory(StrEnum):
+    DOMAIN = "domain"
+    SAFETY = "safety"
+    FACTS = "facts"
+    GENERATION = "generation"
+    REVIEW = "review"
+
+
+class ContentBriefDto(BaseModel):
+    """通用内容输入；领域专属字段只能进入 domain_context。"""
+
+    focus: str = Field(min_length=1, max_length=240)
+    raw_material: str = Field(min_length=1, max_length=20000)
+    domain_context: dict[str, Any] = Field(default_factory=dict)
+    asset_ids: list[UUID] = Field(default_factory=list)
+
+    @classmethod
+    def from_legacy_source(cls, source: "SourceExperienceDto") -> "ContentBriefDto":
+        material = "\n".join(
+            value
+            for value in (
+                "；".join(source.actions),
+                source.observations.strip(),
+                source.notes.strip(),
+            )
+            if value
+        )
+        return cls(
+            focus=source.scenario.strip(),
+            raw_material=material or source.scenario.strip(),
+            domain_context={"baby_month": source.baby_month},
+            asset_ids=source.asset_ids,
+        )
+
+
+class UserFacingIssueDto(BaseModel):
+    """面向普通用户的最小问题投影，不携带内部命中或证据。"""
+
+    category: UserIssueCategory
+    message: str = Field(min_length=1, max_length=240)
+    field: str | None = Field(default=None, max_length=64)
+    action: str | None = Field(default=None, max_length=240)
+
+
+class DomainStrategyDescriptorDto(BaseModel):
+    domain_id: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    supplemental_input_schema: dict[str, Any] = Field(default_factory=dict)
+    generation_context: str = ""
+    quality_rules: list[str] = Field(default_factory=list)
+    safety_policy: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] = Field(default_factory=list)
+
+
 class SourceFactDto(BaseModel):
     fact_id: str = Field(min_length=1)
     source_path: str = Field(min_length=1)
@@ -69,9 +126,11 @@ class FactLedgerDto(BaseModel):
 class AccountProfileDto(BaseModel):
     account_id: UUID
     positioning: str = Field(min_length=1)
-    age_range_months: tuple[int, int]
-    current_baby_month: int = Field(ge=0, le=240)
     tone: str = Field(min_length=1)
+    domain_id: str = Field(default="parenting", min_length=1)
+    domain_context: dict[str, Any] = Field(default_factory=dict)
+    age_range_months: tuple[int, int] | None = None
+    current_baby_month: int | None = Field(default=None, ge=0, le=240)
     boundaries: list[str] = Field(default_factory=list)
     common_expressions: list[str] = Field(default_factory=list)
 
@@ -189,6 +248,49 @@ class StyleProfile(BaseModel):
     cta: list[str] = Field(default_factory=list)
 
 
+class UserResultProjectionDto(BaseModel):
+    """普通客户端需要的内容结果；不包含 trace、review 或审计证据。"""
+
+    note_id: UUID
+    account_id: UUID
+    column_id: UUID
+    status: NoteStatus
+    domain_id: str = "parenting"
+    content_brief: ContentBriefDto
+    focus: str
+    topic_angle: str = ""
+    title_candidates: list[str] = Field(default_factory=list)
+    body: str = ""
+    hashtags: list[str] = Field(default_factory=list)
+    cover_copy: str = ""
+    image_suggestions: list[str] = Field(default_factory=list)
+    style_form: StyleForm | None = None
+    issue: UserFacingIssueDto | None = None
+    updated_at: datetime
+
+    @classmethod
+    def from_draft(cls, draft: "NoteDraftDto") -> "UserResultProjectionDto":
+        assert draft.content_brief is not None
+        return cls(
+            note_id=draft.note_id,
+            account_id=draft.account_id,
+            column_id=draft.column_id,
+            status=draft.status,
+            domain_id=draft.domain_id,
+            content_brief=draft.content_brief,
+            focus=draft.content_brief.focus,
+            topic_angle=draft.topic_angle,
+            title_candidates=draft.title_candidates,
+            body=draft.body,
+            hashtags=draft.hashtags,
+            cover_copy=draft.cover_copy,
+            image_suggestions=draft.image_suggestions,
+            style_form=draft.style_form,
+            issue=draft.user_issue,
+            updated_at=draft.updated_at,
+        )
+
+
 class AgentTraceStepDto(BaseModel):
     """API 层返回的 agent 步骤。"""
 
@@ -202,11 +304,13 @@ class AgentTraceStepDto(BaseModel):
 
 
 class StyledNoteResponseDto(BaseModel):
-    """风格转换响应：风格化草稿 + agent 逐步 trace。"""
+    """兼容内部调用的结果容器；普通 HTTP 响应只应消费 user_result。"""
 
-    # Flutter 收到这个对象后，一边把 draft 交给编辑器，一边可展示 trace 摘要。
     draft: NoteDraftDto
-    agent_trace: list[AgentTraceStepDto] = Field(default_factory=list)
+    user_result: UserResultProjectionDto | None = None
+    # trace 保留给服务端内部调用，FastAPI 默认序列化时不会暴露它。
+    # 授权调试接口可以直接读取 WorkflowResult.agent_trace。
+    agent_trace: list[AgentTraceStepDto] = Field(default_factory=list, exclude=True)
 
 
 class NoteDraftDto(BaseModel):
@@ -215,17 +319,44 @@ class NoteDraftDto(BaseModel):
     account_id: UUID
     column_id: UUID
     status: NoteStatus
+    domain_id: str = "parenting"
     topic_angle: str = ""
     title_candidates: list[str] = Field(default_factory=list)
     body: str = ""
     hashtags: list[str] = Field(default_factory=list)
     cover_copy: str = ""
     image_suggestions: list[str] = Field(default_factory=list)
-    source: SourceExperienceDto
+    content_brief: ContentBriefDto | None = None
+    # 旧 JSONB 和旧客户端仍可读取；新领域流程不依赖该字段。
+    source: SourceExperienceDto | None = None
     # 旧 JSONB 草稿可能没有该键，因此必须保持可空并兼容读取。
     style_form: StyleForm | None = None
     review: ReviewResultDto | None = None
+    user_issue: UserFacingIssueDto | None = None
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def ensure_compatible_brief(self) -> "NoteDraftDto":
+        if self.content_brief is None and self.source is not None:
+            self.content_brief = ContentBriefDto.from_legacy_source(self.source)
+        if self.content_brief is None:
+            raise ValueError("content_brief_or_source_required")
+        return self
+
+
+class UserResultResponseDto(BaseModel):
+    """普通客户端响应；只暴露结果和需要用户处理的最小问题集合。"""
+
+    draft: UserResultProjectionDto
+    issues: list[UserFacingIssueDto] = Field(default_factory=list)
+
+    @classmethod
+    def from_draft(cls, draft: NoteDraftDto) -> "UserResultResponseDto":
+        projection = UserResultProjectionDto.from_draft(draft)
+        return cls(
+            draft=projection,
+            issues=[projection.issue] if projection.issue is not None else [],
+        )
 
 
 class DraftVersionDto(BaseModel):
@@ -236,6 +367,7 @@ class DraftVersionDto(BaseModel):
     hashtags: list[str] = Field(default_factory=list)
     cover_copy: str = ""
     image_suggestions: list[str] = Field(default_factory=list)
+    content_brief: ContentBriefDto | None = None
     style_form: StyleForm | None = None
     review: ReviewResultDto | None = None
     created_at: datetime

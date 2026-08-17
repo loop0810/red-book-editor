@@ -118,6 +118,7 @@ domain_id + version
 
 ## 主要端点
 
+- `POST /api/v1/accounts`：在当前无登录的本地工作台创建账号配置，由服务端生成账号标识；
 - `PUT /api/v1/accounts/{account_id}`：保存账号领域和配置；
 - `GET /api/v1/accounts/{account_id}`：读取账号配置；
 - `POST /api/v1/accounts/{account_id}/columns`：创建内容栏目；
@@ -133,6 +134,8 @@ domain_id + version
 - `POST /api/v1/notes/{note_id}/publish-record`：用户主动记录手动发布结果。
 
 AgentRun 的创建、状态、事件、取消和恢复端点仍可供客户端完成可靠的长耗时流程，但普通用户页面只表现为加载、成功、失败、继续或重试，不展示阶段列表。
+
+当前版本的账号是内容生成上下文，不是产品用户身份。首次使用可以直接创建账号和默认栏目；注册、登录、密码、会话和多用户权限属于后续独立身份能力，不得由客户端伪造一个登录流程来替代。
 
 ## 内部审核和安全边界
 

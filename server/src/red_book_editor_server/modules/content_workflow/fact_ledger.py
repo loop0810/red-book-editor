@@ -7,6 +7,7 @@ import re
 from red_book_editor_server.domain.contracts import (
     ClaimAuditItemDto,
     ClaimSupport,
+    ContentBriefDto,
     EditableField,
     FactKind,
     FactLedgerDto,
@@ -33,53 +34,94 @@ _BOUNDARY_FACTS = (
 )
 
 
-def build_fact_ledger(source: SourceExperienceDto) -> FactLedgerDto:
+def build_fact_ledger(source: SourceExperienceDto | ContentBriefDto) -> FactLedgerDto:
     """从用户来源派生只读事实账本；模型输出永远不会写回这里。"""
 
     # 账本同时保存 confirmed/observed/opinion 和 unknown/forbidden 边界，
     # 后续审核既要确认“写到了什么”，也要识别“哪些内容不能被补出来”。
+    brief = (
+        source
+        if isinstance(source, ContentBriefDto)
+        else ContentBriefDto.from_legacy_source(source)
+    )
     facts: list[SourceFactDto] = [
         SourceFactDto(
-            fact_id="source.baby_month",
-            source_path="source.baby_month",
+            fact_id="brief.focus",
+            source_path="content_brief.focus",
             kind=FactKind.CONFIRMED,
-            text=f"{source.baby_month}个月",
+            text=brief.focus.strip(),
         ),
         SourceFactDto(
-            fact_id="source.scenario",
-            source_path="source.scenario",
+            fact_id="brief.raw_material",
+            source_path="content_brief.raw_material",
             kind=FactKind.CONFIRMED,
-            text=source.scenario.strip(),
+            text=brief.raw_material.strip(),
         ),
     ]
-    facts.extend(
-        SourceFactDto(
-            fact_id=f"source.actions[{index}]",
-            source_path=f"source.actions[{index}]",
-            kind=FactKind.CONFIRMED,
-            text=action.strip(),
-        )
-        for index, action in enumerate(source.actions)
-        if action.strip()
-    )
-    if source.observations.strip():
+    for index, clause in enumerate(_constraint_clauses(brief.raw_material)):
         facts.append(
             SourceFactDto(
-                fact_id="source.observations",
-                source_path="source.observations",
-                kind=FactKind.OBSERVED,
-                text=source.observations.strip(),
+                fact_id=f"brief.constraints[{index}]",
+                source_path=f"content_brief.raw_material[{index}]",
+                kind=FactKind.CONSTRAINT,
+                text=clause,
             )
         )
-    if source.notes.strip():
-        facts.append(
+    if isinstance(source, SourceExperienceDto):
+        facts.extend(
+            [
+                SourceFactDto(
+                    fact_id="source.baby_month",
+                    source_path="source.baby_month",
+                    kind=FactKind.CONFIRMED,
+                    text=f"{source.baby_month}个月",
+                ),
+                SourceFactDto(
+                    fact_id="source.scenario",
+                    source_path="source.scenario",
+                    kind=FactKind.CONFIRMED,
+                    text=source.scenario.strip(),
+                ),
+            ]
+        )
+        facts.extend(
             SourceFactDto(
-                fact_id="source.notes",
-                source_path="source.notes",
-                kind=FactKind.OPINION,
-                text=source.notes.strip(),
+                fact_id=f"source.actions[{index}]",
+                source_path=f"source.actions[{index}]",
+                kind=FactKind.CONFIRMED,
+                text=action.strip(),
             )
+            for index, action in enumerate(source.actions)
+            if action.strip()
         )
+        if source.observations.strip():
+            facts.append(
+                SourceFactDto(
+                    fact_id="source.observations",
+                    source_path="source.observations",
+                    kind=FactKind.OBSERVED,
+                    text=source.observations.strip(),
+                )
+            )
+        if source.notes.strip():
+            facts.append(
+                SourceFactDto(
+                    fact_id="source.notes",
+                    source_path="source.notes",
+                    kind=FactKind.OPINION,
+                    text=source.notes.strip(),
+                )
+            )
+    for key, value in brief.domain_context.items():
+        if isinstance(value, (str, int, float, bool)):
+            facts.append(
+                SourceFactDto(
+                    fact_id=f"domain_context.{key}",
+                    source_path=f"content_brief.domain_context.{key}",
+                    kind=FactKind.CONSTRAINT,
+                    text=f"{key}：{value}",
+                )
+            )
     facts.extend(
         SourceFactDto(fact_id=fact_id, source_path=path, kind=kind, text=text)
         for fact_id, path, kind, text in _BOUNDARY_FACTS
@@ -87,7 +129,7 @@ def build_fact_ledger(source: SourceExperienceDto) -> FactLedgerDto:
     return FactLedgerDto(facts=facts)
 
 
-def source_digest(source: SourceExperienceDto) -> str:
+def source_digest(source: SourceExperienceDto | ContentBriefDto) -> str:
     return _digest(source.model_dump(mode="json"))
 
 
@@ -100,6 +142,9 @@ def content_digest(draft: NoteDraftDto) -> str:
         "cover_copy": draft.cover_copy,
         "image_suggestions": draft.image_suggestions,
         "style_form": draft.style_form.value if draft.style_form else None,
+        "content_brief": draft.content_brief.model_dump(mode="json")
+        if draft.content_brief
+        else None,
     }
     return _digest(payload)
 
@@ -199,6 +244,15 @@ def _contains_uncertainty_marker(claim: str) -> bool:
 
 def _compact(value: str) -> str:
     return re.sub(r"[\s，。！？、,.!?；;：:（）()\[\]【】《》“”‘’\"'…·]", "", value).lower()
+
+
+def _constraint_clauses(value: str) -> list[str]:
+    clauses = re.split(r"[。！？!?；;\n]+", value)
+    return [
+        clause.strip()
+        for clause in clauses
+        if clause.strip() and re.search(r"不|不要|无需|只想|仅|避免|不准备|不办", clause)
+    ]
 
 
 def _digest(value: object) -> str:

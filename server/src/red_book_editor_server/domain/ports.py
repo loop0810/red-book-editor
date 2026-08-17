@@ -8,11 +8,13 @@ from pydantic import BaseModel
 
 from red_book_editor_server.domain.contracts import (
     AccountProfileDto,
+    ContentBriefDto,
     ContentColumnDto,
     NoteDraftDto,
     SourceExperienceDto,
     StyleForm,
 )
+from red_book_editor_server.domain.strategy import DomainStrategyPack
 
 if TYPE_CHECKING:
     from red_book_editor_server.domain.agent_runs import (
@@ -25,11 +27,17 @@ if TYPE_CHECKING:
 class ContentGenerator(Protocol):
     async def generate(
         self,
-        source: SourceExperienceDto,
+        brief: ContentBriefDto | SourceExperienceDto,
         *,
         account_id: UUID | None = None,
         column_id: UUID | None = None,
     ) -> NoteDraftDto: ...
+
+
+class DomainStrategyPort(Protocol):
+    """应用服务解析领域策略时依赖的最小端口。"""
+
+    def resolve(self, domain_id: str) -> DomainStrategyPack: ...
 
 
 class NoteRepository(Protocol):

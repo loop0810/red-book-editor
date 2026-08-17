@@ -5,12 +5,15 @@ import re
 from red_book_editor_server.domain.contracts import (
     ClaimAuditItemDto,
     ClaimSupport,
+    ContentBriefDto,
     NoteDraftDto,
     NoteStatus,
     ReviewFindingDto,
     ReviewResultDto,
     RiskLevel,
+    UserFacingIssueDto,
 )
+from red_book_editor_server.domain.strategy import DomainStrategyPack, ParentingStrategyPack
 from red_book_editor_server.modules.content_workflow.fact_ledger import (
     AUDIT_VERSION,
     POLICY_VERSION,
@@ -64,12 +67,19 @@ _MEDICAL_CONTEXT_PATTERNS = (r"发烧|高烧|退烧|湿疹|尿布疹|医院|退�
 class DeterministicContentReviewer:
     """执行不依赖模型的第一层内容和领域风险检查。"""
 
+    def __init__(self, *, domain_id: str = "parenting") -> None:
+        self._domain_id = domain_id
+
     def review(self, draft: NoteDraftDto) -> ReviewResultDto:
         findings: list[ReviewFindingDto] = []
-        findings.extend(self._find(draft, _DIAGNOSIS_PATTERNS, "diagnosis", "内容不能进行疾病判断"))
-        findings.extend(
-            self._find(draft, _MEDICATION_PATTERNS, "medication", "内容不能提供用药建议")
-        )
+        if self._domain_id == "parenting":
+            findings.extend(
+                self._find(draft, _DIAGNOSIS_PATTERNS, "diagnosis", "内容不能进行疾病判断")
+            )
+            findings.extend(
+                self._find(draft, _MEDICATION_PATTERNS, "medication", "内容不能提供用药建议")
+            )
+        findings.extend(self._focus_findings(draft))
         findings.extend(
             self._find(
                 draft,
@@ -79,42 +89,58 @@ class DeterministicContentReviewer:
                 RiskLevel.WARNING,
             )
         )
-        findings.extend(
-            self._find(
-                draft,
-                _MEDICAL_CONTEXT_PATTERNS,
-                "medical_context",
-                "医疗相关经历需要人工复核，不能扩展为普遍建议",
-                RiskLevel.WARNING,
+        if self._domain_id == "parenting":
+            findings.extend(
+                self._find(
+                    draft,
+                    _MEDICAL_CONTEXT_PATTERNS,
+                    "medical_context",
+                    "医疗相关经历需要人工复核，不能扩展为普遍建议",
+                    RiskLevel.WARNING,
+                )
             )
-        )
-        findings.extend(self._sleep_findings(draft))
-        findings.extend(
-            self._find(
-                draft,
-                _PRODUCT_SAFETY_PATTERNS,
-                "product_safety_claim",
-                "不能保证产品绝对安全、适合所有宝宝或促进发育",
+            findings.extend(self._sleep_findings(draft))
+            findings.extend(
+                self._find(
+                    draft,
+                    _PRODUCT_SAFETY_PATTERNS,
+                    "product_safety_claim",
+                    "不能保证产品绝对安全、适合所有宝宝或促进发育",
+                )
             )
-        )
-        findings.extend(
-            self._find(
-                draft,
-                _EXTERNAL_BACKING_PATTERNS,
-                "external_backing",
-                "不能伪造研究、医生或专家背书",
+            findings.extend(
+                self._find(
+                    draft,
+                    _EXTERNAL_BACKING_PATTERNS,
+                    "external_backing",
+                    "不能伪造研究、医生或专家背书",
+                )
             )
-        )
-        findings.extend(
-            self._find(
-                draft,
-                _FABRICATED_DETAIL_PATTERNS,
-                "fabricated_detail",
-                "请删除来源经历中没有提供的活动细节",
+            findings.extend(
+                self._find(
+                    draft,
+                    _FABRICATED_DETAIL_PATTERNS,
+                    "fabricated_detail",
+                    "请删除来源经历中没有提供的活动细节",
+                )
             )
-        )
         passed = not any(finding.level is RiskLevel.BLOCKING for finding in findings)
         return ReviewResultDto(passed=passed, findings=findings)
+
+    def _focus_findings(self, draft: NoteDraftDto) -> list[ReviewFindingDto]:
+        if draft.content_brief is None or not draft.content_brief.focus.strip():
+            return []
+        focus = _compact(draft.content_brief.focus)
+        if any(focus in _compact(title) for title in draft.title_candidates if title.strip()):
+            return []
+        return [
+            ReviewFindingDto(
+                level=RiskLevel.WARNING,
+                code="focus_alignment",
+                message="标题没有明确围绕本次主题",
+                field="title",
+            )
+        ]
 
     def _sleep_findings(self, draft: NoteDraftDto) -> list[ReviewFindingDto]:
         for field, text in _draft_text_fields(draft):
@@ -168,17 +194,21 @@ class DeterministicContentReviewer:
 class ModelAssistedContentReviewer:
     """保留模型辅助审核接口；当前使用确定性规则作为可重复回退实现。"""
 
+    def __init__(self, *, domain_id: str = "parenting") -> None:
+        self._domain_id = domain_id
+
     async def review(self, draft: NoteDraftDto) -> ReviewResultDto:
         findings: list[ReviewFindingDto] = []
-        findings.extend(
-            self._find(
-                draft,
-                _ACCOUNT_SCOPE_PATTERNS,
-                "account_scope",
-                "内容偏离0-2岁育儿账号定位, 请确认或调整主题",
-                RiskLevel.WARNING,
+        if self._domain_id == "parenting":
+            findings.extend(
+                self._find(
+                    draft,
+                    _ACCOUNT_SCOPE_PATTERNS,
+                    "account_scope",
+                    "内容偏离当前育儿账号定位，请确认或调整主题",
+                    RiskLevel.WARNING,
+                )
             )
-        )
         findings.extend(
             self._find(
                 draft,
@@ -222,14 +252,30 @@ class ModelAssistedContentReviewer:
         return []
 
 
-async def review_draft(draft: NoteDraftDto) -> ReviewResultDto:
+async def review_draft(
+    draft: NoteDraftDto,
+    *,
+    strategy: DomainStrategyPack | None = None,
+) -> ReviewResultDto:
     """统一生成事实账本、声明审计和内容安全结果。"""
 
-    ledger = build_fact_ledger(draft.source)
+    active_strategy = strategy or ParentingStrategyPack()
+    brief = draft.content_brief
+    source = draft.source
+    if brief is None and source is not None:
+        brief = ContentBriefDto.from_legacy_source(source)
+    if brief is None:
+        raise ValueError("content_brief_or_source_required")
+    active_strategy.validate_brief(brief)
+    ledger = build_fact_ledger(source or brief)
     claim_audit = audit_claims(draft, ledger)
-    deterministic = DeterministicContentReviewer().review(draft)
-    model_assisted = await ModelAssistedContentReviewer().review(draft)
-    claim_findings = _claim_findings(claim_audit)
+    domain_id = active_strategy.descriptor.domain_id
+    deterministic = DeterministicContentReviewer(domain_id=domain_id).review(draft)
+    model_assisted = await ModelAssistedContentReviewer(domain_id=domain_id).review(draft)
+    claim_findings = _claim_findings(
+        claim_audit,
+        domain_id=active_strategy.descriptor.domain_id,
+    )
     findings_by_key = {
         (finding.code, finding.field, finding.matched_text): finding
         for finding in [*deterministic.findings, *model_assisted.findings, *claim_findings]
@@ -240,7 +286,7 @@ async def review_draft(draft: NoteDraftDto) -> ReviewResultDto:
         passed=passed,
         findings=findings,
         claim_audit=claim_audit,
-        source_digest=source_digest(draft.source),
+        source_digest=source_digest(brief),
         content_digest=content_digest(draft),
         audit_version=AUDIT_VERSION,
         policy_version=POLICY_VERSION,
@@ -254,15 +300,9 @@ def status_for_review(
 
     if review is None:
         return NoteStatus.NEEDS_REVIEW
-    if not review.passed or any(
-        finding.level in (RiskLevel.BLOCKING, RiskLevel.WARNING) for finding in review.findings
-    ):
+    if not review.passed or any(finding.level is RiskLevel.BLOCKING for finding in review.findings):
         return NoteStatus.NEEDS_REVIEW
-    if any(
-        item.support is not ClaimSupport.SUPPORTED
-        or item.level in (RiskLevel.BLOCKING, RiskLevel.WARNING)
-        for item in review.claim_audit
-    ):
+    if any(item.level is RiskLevel.BLOCKING for item in review.claim_audit):
         return NoteStatus.NEEDS_REVIEW
     if not _has_audit_metadata(review):
         return NoteStatus.NEEDS_REVIEW
@@ -272,18 +312,25 @@ def status_for_review(
 
 
 def review_matches_draft(review: ReviewResultDto | None, draft: NoteDraftDto) -> bool:
+    brief = draft.content_brief
+    if brief is None:
+        if draft.source is None:
+            return False
+        brief = ContentBriefDto.from_legacy_source(draft.source)
     return bool(
         review
         and _has_audit_metadata(review)
-        and review.source_digest == source_digest(draft.source)
+        and review.source_digest == source_digest(brief)
         and review.content_digest == content_digest(draft)
     )
 
 
-def _claim_findings(claim_audit: list[ClaimAuditItemDto]) -> list[ReviewFindingDto]:
+def _claim_findings(
+    claim_audit: list[ClaimAuditItemDto], *, domain_id: str
+) -> list[ReviewFindingDto]:
     findings: list[ReviewFindingDto] = []
     for item in claim_audit:
-        risk = _claim_risk(item.claim)
+        risk = _claim_risk(item.claim, domain_id=domain_id)
         if item.support is ClaimSupport.SUPPORTED and risk is RiskLevel.NONE:
             continue
         if risk is RiskLevel.NONE:
@@ -311,14 +358,14 @@ def _claim_findings(claim_audit: list[ClaimAuditItemDto]) -> list[ReviewFindingD
     return findings
 
 
-def _claim_risk(claim: str) -> RiskLevel:
-    if _first_match(claim, _DIAGNOSIS_PATTERNS + _MEDICATION_PATTERNS):
+def _claim_risk(claim: str, *, domain_id: str) -> RiskLevel:
+    if domain_id == "parenting" and _first_match(claim, _DIAGNOSIS_PATTERNS + _MEDICATION_PATTERNS):
         return RiskLevel.BLOCKING
-    if _first_match(claim, _PRODUCT_SAFETY_PATTERNS + _EXTERNAL_BACKING_PATTERNS):
+    if domain_id == "parenting" and _first_match(claim, _PRODUCT_SAFETY_PATTERNS):
         return RiskLevel.BLOCKING
-    if _first_match(claim, _FABRICATED_DETAIL_PATTERNS):
+    if _first_match(claim, _EXTERNAL_BACKING_PATTERNS + _FABRICATED_DETAIL_PATTERNS):
         return RiskLevel.BLOCKING
-    if _first_match(claim, _SLEEP_RECOUNT_PATTERNS):
+    if domain_id == "parenting" and _first_match(claim, _SLEEP_RECOUNT_PATTERNS):
         return (
             RiskLevel.BLOCKING
             if _first_match(claim, _SLEEP_RECOMMENDATION_PATTERNS)
@@ -327,6 +374,29 @@ def _claim_risk(claim: str) -> RiskLevel:
     if _first_match(claim, _GUARANTEE_PATTERNS):
         return RiskLevel.WARNING
     return RiskLevel.NONE
+
+
+def project_user_issue(
+    review: ReviewResultDto | None,
+    *,
+    strategy: DomainStrategyPack | None = None,
+) -> UserFacingIssueDto | None:
+    """只把 blocking finding 转成精确的用户提示。"""
+
+    if review is None:
+        return None
+    blocking = next(
+        (finding for finding in review.findings if finding.level is RiskLevel.BLOCKING),
+        None,
+    )
+    if blocking is None:
+        return None
+    active_strategy = strategy or ParentingStrategyPack()
+    return active_strategy.project_issue(
+        code=blocking.code,
+        field=_normalize_field(blocking.field or "") or None,
+        fallback_message=blocking.message,
+    )
 
 
 def _has_audit_metadata(review: ReviewResultDto) -> bool:
@@ -366,3 +436,7 @@ def _first_match(text: str, patterns: tuple[str, ...]) -> str | None:
         if match:
             return match.group(0)
     return None
+
+
+def _compact(value: str) -> str:
+    return re.sub(r"[\s，。！？、,.!?；;：:（）()\[\]【】《》“”‘’\"'…·]", "", value).lower()

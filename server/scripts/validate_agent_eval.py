@@ -8,6 +8,7 @@ from typing import Any
 REQUIRED_CASE_FIELDS = {
     "case_id",
     "form",
+    "content_brief",
     "source",
     "expected_behavior",
     "must_preserve",
@@ -15,6 +16,7 @@ REQUIRED_CASE_FIELDS = {
     "forbidden_inferences",
 }
 REQUIRED_SOURCE_FIELDS = {"baby_month", "scenario", "actions", "observations", "notes"}
+REQUIRED_BRIEF_FIELDS = {"focus", "raw_material", "domain_context"}
 SENSITIVE_KEYS = {"api_key", "authorization", "access_token", "secret", "token"}
 REQUIRED_DIAGNOSTIC_FIELDS = {
     "status",
@@ -78,6 +80,13 @@ def validate_cases(cases: Any) -> set[str]:
             raise ValueError(f"{case_id}: source fields are incomplete")
         if not isinstance(source["actions"], list) or not source["actions"]:
             raise ValueError(f"{case_id}: source.actions must not be empty")
+        brief = case["content_brief"]
+        if not isinstance(brief, dict) or REQUIRED_BRIEF_FIELDS - brief.keys():
+            raise ValueError(f"{case_id}: content_brief fields are incomplete")
+        if not isinstance(brief["focus"], str) or not brief["focus"].strip():
+            raise ValueError(f"{case_id}: content_brief.focus must not be empty")
+        if not isinstance(brief["raw_material"], str) or not brief["raw_material"].strip():
+            raise ValueError(f"{case_id}: content_brief.raw_material must not be empty")
     return case_ids
 
 
@@ -111,9 +120,7 @@ def validate_run(run: Any, case_ids: set[str]) -> None:
             raise ValueError("schema 4 run requires evaluation_context")
         missing_context = REQUIRED_EVALUATION_CONTEXT_FIELDS - context.keys()
         if missing_context:
-            raise ValueError(
-                f"evaluation_context is missing fields: {sorted(missing_context)}"
-            )
+            raise ValueError(f"evaluation_context is missing fields: {sorted(missing_context)}")
     for record in records:
         if not isinstance(record, dict):
             raise ValueError("each run record must be an object")

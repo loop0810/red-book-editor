@@ -25,8 +25,8 @@ from red_book_editor_server.domain.agent import (
     AgentRunStatus,
     AgentTraceStep,
 )
-from red_book_editor_server.domain.contracts import SourceExperienceDto, StyleForm
-from red_book_editor_server.domain.ports import ModelGatewayError
+from red_book_editor_server.domain.contracts import ContentBriefDto, SourceExperienceDto, StyleForm
+from red_book_editor_server.domain.ports import ModelGateway, ModelGatewayError
 from red_book_editor_server.infrastructure.llm import DeepSeekModelGateway
 from red_book_editor_server.modules.content_workflow.styling.agent import style_draft
 
@@ -70,7 +70,7 @@ def load_cases(case_ids: list[str] | None) -> list[dict[str, Any]]:
 
 
 async def run_case(
-    gateway: object,
+    gateway: ModelGateway,
     case: dict[str, Any],
     attempt: int,
     *,
@@ -83,8 +83,9 @@ async def run_case(
         # 每个 case/attempt 独立执行并保留失败记录；不能因为某一条模型调用失败，
         # 就让整批 baseline 静默缺项或把失败伪装成低分成功。
         source = SourceExperienceDto.model_validate(case["source"])
+        brief = ContentBriefDto.model_validate(case.get("content_brief"))
         form = StyleForm(case["form"])
-        result = await style_draft(gateway, source=source, neutral_draft=None, form=form)  # type: ignore[arg-type]
+        result = await style_draft(gateway, brief=brief, neutral_draft=None, form=form)
         trace = result.trace
         return _annotate_record(
             case,
@@ -183,6 +184,7 @@ def _failed_record(
         output_rate_usd_per_million=output_rate_usd_per_million,
     )
 
+
 def _annotate_record(
     case: dict[str, Any],
     record: dict[str, Any],
@@ -197,7 +199,11 @@ def _annotate_record(
         usage_available = diagnostics.get("usage_available") is True
         prompt_tokens = int(diagnostics.get("prompt_tokens", 0))
         completion_tokens = int(diagnostics.get("completion_tokens", 0))
-        if usage_available and input_rate_usd_per_million is not None and output_rate_usd_per_million is not None:
+        if (
+            usage_available
+            and input_rate_usd_per_million is not None
+            and output_rate_usd_per_million is not None
+        ):
             record["estimated_cost_usd"] = round(
                 prompt_tokens * input_rate_usd_per_million / 1_000_000
                 + completion_tokens * output_rate_usd_per_million / 1_000_000,
@@ -247,7 +253,7 @@ def _rate_from_env(name: str) -> float | None:
     return parsed
 
 
-def build_eval_gateway(settings: Any) -> object:
+def build_eval_gateway(settings: Any) -> ModelGateway:
     """Build a gateway without response caching for independent attempts."""
 
     if settings.model_provider == "deepseek":

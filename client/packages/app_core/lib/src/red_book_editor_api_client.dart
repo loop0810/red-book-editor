@@ -9,7 +9,7 @@ import 'content_workflow_models.dart';
 class RedBookEditorApiClient {
   RedBookEditorApiClient({
     http.Client? client,
-    this.baseUrl = 'http://127.0.0.1:8000',
+    this.baseUrl = 'http://127.0.0.1:8100',
   }) : _client = client ?? http.Client();
 
   final http.Client _client;
@@ -20,13 +20,91 @@ class RedBookEditorApiClient {
   Future<http.Response> getLiveHealth() =>
       _client.get(Uri.parse('$baseUrl/health/live'));
 
+  Future<List<AccountProfile>> listAccounts() async {
+    final response = await _client.get(Uri.parse('$baseUrl/api/v1/accounts'));
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return (jsonDecode(response.body) as List<dynamic>)
+        .map((item) => AccountProfile.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<AccountProfile> createAccount({
+    required AccountProfile account,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/v1/accounts'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode(account.toJson()),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return AccountProfile.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<AccountProfile> updateAccount({
+    required AccountProfile account,
+  }) async {
+    final response = await _client.put(
+      Uri.parse('$baseUrl/api/v1/accounts/${account.accountId}'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode(account.toJson()),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return AccountProfile.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<ContentColumn>> listColumns({required String accountId}) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/api/v1/accounts/$accountId/columns'),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return (jsonDecode(response.body) as List<dynamic>)
+        .map((item) => ContentColumn.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<ContentColumn> createColumn({
+    required String accountId,
+    required String name,
+    required String description,
+    List<String> contentTypes = const [],
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/v1/accounts/$accountId/columns'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({
+        'name': name,
+        'description': description,
+        'content_types': contentTypes,
+      }),
+    );
+    if (response.statusCode >= 400) {
+      throw ApiRequestException(response.statusCode, response.body);
+    }
+    return ContentColumn.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<StyledNoteResponse> generateNote({
     required String accountId,
     required String columnId,
-    required SourceExperience source,
+    ContentBrief? contentBrief,
+    SourceExperience? source,
     required StyleForm form,
   }) async {
-    // SourceExperience 是用户提供的事实来源，form 是期望的表达形式。
+    // ContentBrief 是新契约的事实来源；source 仅为旧客户端保留。
     // 服务端会根据这两个输入生成草稿，而不是客户端自己调用模型。
     final response = await _client.post(
       Uri.parse('$baseUrl/api/v1/notes/generate'),
@@ -35,7 +113,8 @@ class RedBookEditorApiClient {
         'account_id': accountId,
         'column_id': columnId,
         'form': styleFormToApi(form),
-        'source': source.toJson(),
+        if (contentBrief != null) 'content_brief': contentBrief.toJson(),
+        if (source != null) 'source': source.toJson(),
       }),
     );
     if (response.statusCode >= 400) {
@@ -50,7 +129,8 @@ class RedBookEditorApiClient {
   Future<AgentRun> createAgentRun({
     required String accountId,
     required String columnId,
-    required SourceExperience source,
+    ContentBrief? contentBrief,
+    SourceExperience? source,
     required StyleForm form,
   }) async {
     // 异步生成先创建服务端 AgentRun，再通过事件流读取进度；页面不直接等待模型 HTTP 请求。
@@ -61,7 +141,8 @@ class RedBookEditorApiClient {
         'account_id': accountId,
         'column_id': columnId,
         'form': styleFormToApi(form),
-        'source': source.toJson(),
+        if (contentBrief != null) 'content_brief': contentBrief.toJson(),
+        if (source != null) 'source': source.toJson(),
       }),
     );
     if (response.statusCode >= 400) {
@@ -107,9 +188,7 @@ class RedBookEditorApiClient {
     if (response.statusCode >= 400) {
       throw ApiRequestException(response.statusCode, response.body);
     }
-    return NoteDraft.fromJson(
-      jsonDecode(response.body) as Map<String, dynamic>,
-    );
+    return NoteDraft.fromJson(_publicDraftJson(response.body));
   }
 
   Stream<AgentRunEvent> watchAgentRunEvents({
@@ -181,7 +260,8 @@ class RedBookEditorApiClient {
   Future<StyledNoteResponse> generateNoteWithProgress({
     required String accountId,
     required String columnId,
-    required SourceExperience source,
+    ContentBrief? contentBrief,
+    SourceExperience? source,
     required StyleForm form,
     void Function(AgentRunEvent event)? onEvent,
     void Function(AgentRun run)? onRunCreated,
@@ -189,6 +269,7 @@ class RedBookEditorApiClient {
     final run = await createAgentRun(
       accountId: accountId,
       columnId: columnId,
+      contentBrief: contentBrief,
       source: source,
       form: form,
     );
@@ -342,9 +423,7 @@ class RedBookEditorApiClient {
     if (response.statusCode >= 400) {
       throw ApiRequestException(response.statusCode, response.body);
     }
-    return NoteDraft.fromJson(
-      jsonDecode(response.body) as Map<String, dynamic>,
-    );
+    return NoteDraft.fromJson(_publicDraftJson(response.body));
   }
 
   Future<List<NoteDraft>> listNotes({required String accountId}) async {
@@ -355,7 +434,11 @@ class RedBookEditorApiClient {
       throw ApiRequestException(response.statusCode, response.body);
     }
     return (jsonDecode(response.body) as List<dynamic>)
-        .map((json) => NoteDraft.fromJson(json as Map<String, dynamic>))
+        .map(
+          (json) => NoteDraft.fromJson(
+            _withoutInternalReview(json as Map<String, dynamic>),
+          ),
+        )
         .toList();
   }
 
@@ -507,6 +590,16 @@ String _contentTypeForFilename(String filename) {
   return 'image/jpeg';
 }
 
+Map<String, dynamic> _publicDraftJson(String body) {
+  return _withoutInternalReview(jsonDecode(body) as Map<String, dynamic>);
+}
+
+Map<String, dynamic> _withoutInternalReview(Map<String, dynamic> json) {
+  final publicJson = <String, dynamic>{...json};
+  publicJson.remove('review');
+  return publicJson;
+}
+
 String? _filenameFromDisposition(String? disposition) {
   if (disposition == null) return null;
   final match = RegExp(r'filename="?([^";]+)"?').firstMatch(disposition);
@@ -518,6 +611,32 @@ class ApiRequestException implements Exception {
 
   final int statusCode;
   final String body;
+
+  @override
+  String toString() {
+    String? code;
+    try {
+      final payload = jsonDecode(body);
+      if (payload is Map<String, dynamic>) {
+        final detail = payload['detail'];
+        if (detail is String && detail.isNotEmpty) code = detail;
+        final failureCode = payload['failure_code'];
+        if (failureCode is String && failureCode.isNotEmpty) {
+          code ??= failureCode;
+        }
+      }
+    } on FormatException {
+      // 保持通用请求错误，不把服务端原始响应直接展示给用户。
+    }
+    final message = switch (code) {
+      'model_api_key_missing' => 'DeepSeek API Key 未配置，请检查 server/.env',
+      'agent_model_error' => 'DeepSeek 模型调用失败，请检查 API Key 和网络连接',
+      'content_generation_failed' => '内容生成失败，请检查模型配置和服务端日志',
+      'agent_unexpected_error' => '服务端生成失败，请检查服务端日志',
+      _ => code == null ? '请求失败（HTTP $statusCode）' : '请求失败：$code',
+    };
+    return message;
+  }
 }
 
 AgentRunEvent? _agentRunEventFromSse(String block) {

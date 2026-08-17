@@ -23,6 +23,7 @@ from red_book_editor_server.domain.agent import (
 from red_book_editor_server.domain.contracts import (
     AccountProfileDto,
     AgentTraceStepDto,
+    ContentBriefDto,
     ContentColumnDto,
     EditableField,
     FieldSuggestionDto,
@@ -30,7 +31,9 @@ from red_book_editor_server.domain.contracts import (
     SourceExperienceDto,
     StyledNoteResponseDto,
     StyleForm,
+    UserResultProjectionDto,
 )
+from red_book_editor_server.domain.strategy import DomainStrategyPack, DomainStrategyRegistry
 from red_book_editor_server.domain.ports import (
     AccountColumnContextPort,
     ContentGenerator,
@@ -41,12 +44,14 @@ from red_book_editor_server.modules.content_workflow.generator import (
     ContentGenerationError,
     StubContentGenerator,
     generate_with_retry,
+    normalize_content_brief,
 )
 from red_book_editor_server.modules.content_workflow.fact_ledger import (
     content_digest,
     field_digest,
 )
 from red_book_editor_server.modules.content_workflow.review import (
+    project_user_issue,
     review_draft,
     status_for_review,
 )
@@ -84,7 +89,11 @@ class WorkflowResult:
     diagnostics: AgentRunDiagnostics | None = None
 
     def as_response(self) -> StyledNoteResponseDto:
-        return StyledNoteResponseDto(draft=self.draft, agent_trace=self.agent_trace)
+        return StyledNoteResponseDto(
+            draft=self.draft,
+            user_result=UserResultProjectionDto.from_draft(self.draft),
+            agent_trace=self.agent_trace,
+        )
 
 
 class ContentWorkflowService:
@@ -100,18 +109,21 @@ class ContentWorkflowService:
         model_provider: str = "stub",
         gateway: ModelGateway | None = None,
         generator: ContentGenerator | None = None,
+        strategy_registry: DomainStrategyRegistry | None = None,
     ) -> None:
         self._context = context
         self._model_provider = model_provider
         self._gateway = gateway
         self._generator = generator or StubContentGenerator()
+        self._strategies = strategy_registry or DomainStrategyRegistry()
 
     async def generate(
         self,
         *,
         account_id: UUID,
         column_id: UUID,
-        source: SourceExperienceDto,
+        brief: ContentBriefDto | None = None,
+        source: SourceExperienceDto | None = None,
         form: StyleForm,
         cancel_check: Callable[[], Awaitable[bool]] | None = None,
         event_sink: Callable[[AgentRuntimeEvent], Awaitable[None]] | None = None,
@@ -128,16 +140,23 @@ class ContentWorkflowService:
                     failure_code=AgentFailureCode.CANCELLED,
                 ),
             )
+        content_brief, legacy_source = _normalize_request_brief(brief=brief, source=source)
         account, column = await self._load_context(account_id, column_id)
+        strategy = self._strategies.resolve(account.domain_id if account else "parenting")
+        strategy.validate_brief(content_brief)
         if self._model_provider == "deepseek":
             # 真实模型路径由 styling Agent 负责工具循环和结构化输出，
             # 本服务只负责把领域上下文传入，并把最终参数转换成 NoteDraft。
             finalized, trace, diagnostics = await self._style(
-                source=source,
+                brief=content_brief,
                 neutral_draft=None,
                 form=form,
                 account_context=_account_context(account),
-                column_context=column.description if column else "",
+                column_context=strategy.generation_context(
+                    content_brief,
+                    account,
+                    column.description if column else "",
+                ),
                 cancel_check=cancel_check,
                 event_sink=event_sink,
             )
@@ -145,18 +164,27 @@ class ContentWorkflowService:
                 finalized,
                 account_id=account_id,
                 column_id=column_id,
-                source=source,
+                brief=content_brief,
+                source=legacy_source,
             )
+            draft = draft.model_copy(update={"domain_id": strategy.descriptor.domain_id})
         else:
             # stub 只用于本地开发和测试，不模拟模型行为；但仍补齐 style_form，
             # 这样后续审核、保存和字段重生成与真实模型路径保持同一契约。
             draft = await generate_with_retry(
                 self._generator,
-                source,
+                legacy_source or content_brief,
                 account_id=account_id,
                 column_id=column_id,
             )
-            draft = draft.model_copy(update={"style_form": form})
+            draft = draft.model_copy(
+                update={
+                    "style_form": form,
+                    "domain_id": strategy.descriptor.domain_id,
+                    "content_brief": draft.content_brief or content_brief,
+                    "source": draft.source or legacy_source,
+                }
+            )
             trace = _stub_trace("MODEL_PROVIDER=stub：未调用模型，返回中性草稿")
             diagnostics = AgentRunDiagnostics(
                 status=AgentRunStatus.COMPLETED,
@@ -174,12 +202,12 @@ class ContentWorkflowService:
                     failure_code=AgentFailureCode.CANCELLED,
                 ),
             )
-        return await self._reviewed_result(draft, trace, diagnostics=diagnostics)
+        return await self._reviewed_result(draft, trace, strategy=strategy, diagnostics=diagnostics)
 
     async def restyle(self, draft: NoteDraftDto, form: StyleForm) -> WorkflowResult:
         if self._model_provider == "deepseek":
             finalized, trace, diagnostics = await self._style(
-                source=draft.source,
+                brief=_brief_for_draft(draft),
                 neutral_draft=draft,
                 form=form,
             )
@@ -187,9 +215,11 @@ class ContentWorkflowService:
                 finalized,
                 account_id=draft.account_id,
                 column_id=draft.column_id,
+                brief=_brief_for_draft(draft),
                 source=draft.source,
                 note_id=draft.note_id,
             )
+            candidate = candidate.model_copy(update={"domain_id": draft.domain_id})
         else:
             candidate = draft.model_copy(update={"style_form": form})
             trace = _stub_trace("MODEL_PROVIDER=stub：未调用模型，保留当前草稿内容")
@@ -198,7 +228,10 @@ class ContentWorkflowService:
                 phase=AgentPhase.DRAFT,
                 steps=0,
             )
-        return await self._reviewed_result(candidate, trace, diagnostics=diagnostics)
+        strategy = self._strategies.resolve(draft.domain_id)
+        return await self._reviewed_result(
+            candidate, trace, strategy=strategy, diagnostics=diagnostics
+        )
 
     async def regenerate_field(
         self,
@@ -220,7 +253,8 @@ class ContentWorkflowService:
         candidate = draft.model_copy(
             update={**values, "style_form": effective_form, "updated_at": datetime.now(UTC)}
         )
-        review = await review_draft(candidate)
+        strategy = self._strategies.resolve(draft.domain_id)
+        review = await review_draft(candidate, strategy=strategy)
         normalized_field = EditableField(field)
         field_claims = [
             item
@@ -260,11 +294,12 @@ class ContentWorkflowService:
         draft: NoteDraftDto,
         trace: list[AgentTraceStepDto],
         *,
+        strategy: DomainStrategyPack,
         diagnostics: AgentRunDiagnostics | None = None,
     ) -> WorkflowResult:
         # 所有生成入口在返回前都经过同一个 Fact Ledger / Claim Audit 审核出口，
         # 防止主生成、重写和 stub 路径各自维护一套不同的状态判断。
-        review = await review_draft(draft)
+        review = await review_draft(draft, strategy=strategy)
         trace = [
             *trace,
             AgentTraceStepDto(
@@ -276,14 +311,18 @@ class ContentWorkflowService:
             ),
         ]
         reviewed = draft.model_copy(
-            update={"review": review, "status": status_for_review(review, draft)}
+            update={
+                "review": review,
+                "status": status_for_review(review, draft),
+                "user_issue": project_user_issue(review, strategy=strategy),
+            }
         )
         return WorkflowResult(draft=reviewed, agent_trace=trace, diagnostics=diagnostics)
 
     async def _style(
         self,
         *,
-        source: SourceExperienceDto,
+        brief: ContentBriefDto | SourceExperienceDto,
         neutral_draft: NoteDraftDto | None,
         form: StyleForm,
         account_context: str = "",
@@ -296,7 +335,7 @@ class ContentWorkflowService:
         try:
             result = await style_draft(
                 self._gateway,
-                source=source,
+                brief=brief,
                 neutral_draft=neutral_draft,
                 form=form,
                 account_context=account_context,
@@ -329,7 +368,7 @@ class ContentWorkflowService:
             {
                 "role": "system",
                 "content": (
-                    "你只负责重生成指定的一个笔记字段。只能使用 SourceExperience 中的事实，"
+                    "你只负责重生成指定的一个笔记字段。只能使用 ContentBrief 中的事实，"
                     f"表达形式为 {form.value}。只输出合法 JSON，格式为 {schema}，不要输出其他字段。"
                 ),
             },
@@ -338,7 +377,7 @@ class ContentWorkflowService:
                 "content": json.dumps(
                     {
                         "field": field,
-                        "source": draft.source.model_dump(mode="json"),
+                        "content_brief": _brief_for_draft(draft).model_dump(mode="json"),
                         "draft": draft.model_dump(mode="json"),
                     },
                     ensure_ascii=False,
@@ -394,25 +433,40 @@ class ContentWorkflowService:
 def _generate_stub_field(
     draft: NoteDraftDto, field: FieldName, form: StyleForm
 ) -> dict[str, object]:
-    source = draft.source
-    actions = "、".join(source.actions)
+    brief = _brief_for_draft(draft)
+    focus = brief.focus
     if field == "title":
         return {
             "title_candidates": [
-                f"{source.baby_month}个月宝宝的{source.scenario}，{form.value}记录",
-                f"记录宝宝{source.scenario}：{actions}",
+                f"{focus}｜这次经历，我想完整记录下来",
+                f"{focus}：把过程、选择和变化写清楚",
+                f"关于{focus}，一篇不删细节的真实记录",
             ]
         }
     if field == "body":
         return {
             "body": (
-                f"宝宝{source.baby_month}个月时，遇到了{source.scenario}。\n"
-                f"我当时做了：{actions}。\n{source.observations}"
+                f"这次想认真记录的是：{focus}。\n\n"
+                f"原始素材里提到的过程和细节，我先按原意完整整理下来：\n"
+                f"{brief.raw_material}\n\n"
+                "这篇先保留真实记录，后续可以继续补充当时的细节和感受。"
             ).strip()
         }
     if field == "hashtags":
-        return {"hashtags": ["#育儿日常", f"#{source.baby_month}个月宝宝", f"#{source.scenario}"]}
-    return {"cover_copy": source.scenario}
+        clean_focus = "".join(
+            character
+            for character in focus
+            if character not in " \t\n，。！？、,.!?；;：:（）()[]【】"
+        )
+        return {
+            "hashtags": [
+                f"#{clean_focus[:24] or '真实记录'}",
+                "#真实记录",
+                "#生活分享",
+                "#经验分享",
+            ]
+        }
+    return {"cover_copy": f"{focus}\n这次经历完整记录"}
 
 
 def _field_value(draft: NoteDraftDto, field: EditableField) -> str | list[str]:
@@ -438,11 +492,40 @@ def _account_context(account: AccountProfileDto | None) -> str:
         return ""
     boundaries = "、".join(account.boundaries) or "无"
     expressions = "、".join(account.common_expressions) or "无"
-    return (
-        f"定位：{account.positioning}；月龄范围：{account.age_range_months[0]}-"
-        f"{account.age_range_months[1]}个月；当前月龄：{account.current_baby_month}；"
-        f"语气：{account.tone}；边界：{boundaries}；常用表达：{expressions}"
+    age = (
+        f"月龄范围：{account.age_range_months[0]}-{account.age_range_months[1]}个月；"
+        if account.age_range_months
+        else ""
     )
+    month = (
+        f"当前月龄：{account.current_baby_month}；"
+        if account.current_baby_month is not None
+        else ""
+    )
+    return f"领域：{account.domain_id}；定位：{account.positioning}；{age}{month}语气：{account.tone}；边界：{boundaries}；常用表达：{expressions}"
+
+
+def _brief_for_draft(draft: NoteDraftDto) -> ContentBriefDto:
+    if draft.content_brief is not None:
+        return draft.content_brief
+    if draft.source is not None:
+        return ContentBriefDto.from_legacy_source(draft.source)
+    raise ValueError("content_brief_or_source_required")
+
+
+def _normalize_request_brief(
+    *,
+    brief: ContentBriefDto | None,
+    source: SourceExperienceDto | None,
+) -> tuple[ContentBriefDto, SourceExperienceDto | None]:
+    if brief is None and source is None:
+        raise ValueError("content_brief_required")
+    if brief is not None and source is not None:
+        # 新请求优先使用通用 brief，但仍保留 legacy source 供旧草稿回溯。
+        normalized, _ = normalize_content_brief(brief)
+        return normalized, source
+    normalized, legacy = normalize_content_brief(brief or source)  # type: ignore[arg-type]
+    return normalized, legacy
 
 
 def _stub_trace(message: str) -> list[AgentTraceStepDto]:

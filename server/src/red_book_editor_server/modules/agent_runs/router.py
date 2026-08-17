@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from red_book_editor_server.app.dependencies import database_session
@@ -18,7 +18,7 @@ from red_book_editor_server.domain.agent_runs import (
     AgentRunLifecycleStatus,
     AgentRunRecord,
 )
-from red_book_editor_server.domain.contracts import SourceExperienceDto, StyleForm
+from red_book_editor_server.domain.contracts import ContentBriefDto, SourceExperienceDto, StyleForm
 from red_book_editor_server.infrastructure.repositories import (
     SqlAlchemyAccountColumnContextRepository,
     SqlAlchemyAgentRunRepository,
@@ -36,7 +36,14 @@ class CreateAgentRunRequest(BaseModel):
     account_id: UUID
     column_id: UUID
     form: StyleForm
-    source: SourceExperienceDto
+    content_brief: ContentBriefDto | None = None
+    source: SourceExperienceDto | None = None
+
+    @model_validator(mode="after")
+    def require_content_input(self) -> "CreateAgentRunRequest":
+        if self.content_brief is None and self.source is None:
+            raise ValueError("content_brief_required")
+        return self
 
 
 _TERMINAL_STATUSES = {
@@ -64,6 +71,7 @@ async def create_agent_run(
     note = placeholder_note(
         account_id=request.account_id,
         column_id=request.column_id,
+        brief=request.content_brief,
         source=request.source,
         form=request.form,
     )

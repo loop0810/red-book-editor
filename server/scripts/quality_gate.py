@@ -21,11 +21,13 @@ CASES_PATH = ROOT / "evals" / "agent_baseline" / "cases.json"
 RUNS_DIR = ROOT / "evals" / "agent_baseline" / "runs"
 REPORTS_DIR = ROOT / "evals" / "agent_baseline" / "reports"
 SCORE_DIMENSIONS = (
+    "focus_alignment",
+    "account_style_fit",
     "factual_fidelity",
     "safety",
-    "style_fit",
     "structure",
     "naturalness",
+    "usefulness",
     "edit_cost",
 )
 

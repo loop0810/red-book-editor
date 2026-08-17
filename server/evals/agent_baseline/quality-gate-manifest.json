@@ -1,6 +1,6 @@
 {
   "manifest_version": "p1-06-quality-gate-v1",
-  "scorecard_version": "scorecard-v1",
+  "scorecard_version": "scorecard-v2",
   "model_provider": "deepseek",
   "model": "deepseek-v4-flash",
   "model_max_tokens": 2048,
@@ -18,9 +18,9 @@
     "max_estimated_cost_usd": 5.0
   },
   "expected_digests": {
-    "cases_sha256": "90352acd3d22074ba65daacc75ca59f57cbda948aa8d50b5fa9f996bff664d1b",
-    "scorecard_sha256": "35710ab57160910a764f2562fd962cdea11382747e90ce6da4a369e30b8750b3",
-    "prompt_sha256": "cf0d2505cdff75047f86f9a50843bf8932cd532aa27c3240d8fc997308188dcf",
+    "cases_sha256": "b557460f73d68f3ea5e7cf65eb329b67ae1d800526b69b45dab395849222f9c4",
+    "scorecard_sha256": "bbb5421d3247097d4d40f610ed9509d29fb131eecad0bd1cd90545f507c9637d",
+    "prompt_sha256": "f231cca20771c5909780fee2014596261bad1aacd8d1b8ef809a9705664d18bc",
     "profile_sha256": "e07a46a5c0a679811a0d405b56fd0e77b817ae7a49af16ed03dfe01ed2cadfaf",
     "agent_config_sha256": "29fa7ea29445dd43e9b9cd67fa258cf3e5c19da22ff9f89b96611525934d60f7"
   }

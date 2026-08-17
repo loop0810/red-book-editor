@@ -22,6 +22,10 @@
 - **WHEN** 用户填写育儿领域的月龄等附加信息
 - **THEN** 系统将其保存为育儿领域上下文，不要求其他领域也提供相同字段
 
+#### Scenario: Bootstrap the first account without authentication
+- **WHEN** 当前工作台没有任何账号且用户点击“配置第一个账号”
+- **THEN** 系统允许用户直接创建账号配置并进入内容工作台；V1 不要求注册或登录，账号身份与内容上下文仍由服务端生成和保存
+
 ### Requirement: Manage content columns
 
 系统 SHALL 允许用户创建、编辑和停用内容栏目，并为每个栏目保存名称、说明和适合的内容类型；栏目属于账号和领域上下文，不得替代账号领域或被客户端固定 ID 静默替代。
@@ -37,6 +41,10 @@
 #### Scenario: Resolve a real column identity
 - **WHEN** 客户端发起生成
 - **THEN** 请求使用服务端返回的真实栏目标识，不能依赖手工写入客户端的随机或环境相关栏目 ID
+
+#### Scenario: Recover from an account without columns
+- **WHEN** 账号存在但没有启用栏目
+- **THEN** 首页提供创建默认栏目的可交互入口；创建成功后使用服务端返回的栏目标识继续进入内容创作，不显示无操作的阻塞空状态
 
 ### Requirement: Preserve future account isolation
 

@@ -27,3 +27,22 @@ class SourceExperienceDraftStore {
   // 只有生成成功并把内容交给编辑器后才清理，避免失败请求造成数据丢失。
   Future<void> clear() => _preferences.remove(_key);
 }
+
+class ContentBriefDraftStore {
+  ContentBriefDraftStore({SharedPreferencesAsync? preferences})
+    : _preferences = preferences ?? SharedPreferencesAsync();
+
+  static const _key = 'content_brief_draft';
+  final SharedPreferencesAsync _preferences;
+
+  Future<void> save(ContentBrief brief) =>
+      _preferences.setString(_key, jsonEncode(brief.toJson()));
+
+  Future<ContentBrief?> load() async {
+    final value = await _preferences.getString(_key);
+    if (value == null) return null;
+    return ContentBrief.fromJson(jsonDecode(value) as Map<String, dynamic>);
+  }
+
+  Future<void> clear() => _preferences.remove(_key);
+}

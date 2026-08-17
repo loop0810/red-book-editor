@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from red_book_editor_server.domain.contracts import (
     AccountProfileDto,
+    ContentBriefDto,
     ContentColumnDto,
     EditableField,
     FieldSuggestionDto,
@@ -18,6 +19,7 @@ from red_book_editor_server.domain.contracts import (
     SourceExperienceDto,
     SuggestionStatus,
     StyleForm,
+    UserFacingIssueDto,
 )
 from red_book_editor_server.domain.agent import AgentFailureCode, AgentPhase, AgentRunDiagnostics
 from red_book_editor_server.domain.agent_runs import (
@@ -55,8 +57,12 @@ class SqlAlchemyAccountColumnContextRepository:
             return None
         return AccountProfileDto(
             account_id=account.id,
+            domain_id=account.domain_id,
+            domain_context=account.domain_context or {},
             positioning=account.positioning,
-            age_range_months=(account.min_age_months, account.max_age_months),
+            age_range_months=(account.min_age_months, account.max_age_months)
+            if account.min_age_months is not None and account.max_age_months is not None
+            else None,
             current_baby_month=account.current_baby_month,
             tone=account.tone,
             boundaries=account.boundaries,
@@ -101,7 +107,7 @@ class SqlAlchemyNoteRepository:
             account_id=draft.account_id,
             column_id=draft.column_id,
             status=draft.status.value,
-            source=draft.source.model_dump(mode="json"),
+            source=_source_from_draft(draft),
             content=_content_from_draft(draft),
             review=draft.review.model_dump(mode="json") if draft.review else None,
         )
@@ -152,17 +158,28 @@ class SqlAlchemyNoteRepository:
             account_id=note.account_id,
             column_id=note.column_id,
             status=NoteStatus(note.status),
+            domain_id=content.get("domain_id", "parenting"),
             topic_angle=content.get("topic_angle", ""),
             title_candidates=content.get("title_candidates", []),
             body=content.get("body", ""),
             hashtags=content.get("hashtags", []),
             cover_copy=content.get("cover_copy", ""),
             image_suggestions=content.get("image_suggestions", []),
-            source=SourceExperienceDto.model_validate(note.source),
+            content_brief=ContentBriefDto.model_validate(content["content_brief"])
+            if content.get("content_brief")
+            else None,
+            source=SourceExperienceDto.model_validate(note.source)
+            if "baby_month" in note.source
+            else None,
             style_form=StyleForm(content["style_form"])
             if content.get("style_form") is not None
             else None,
             review=review,
+            user_issue=(
+                UserFacingIssueDto.model_validate(content["user_issue"])
+                if content.get("user_issue")
+                else None
+            ),
             updated_at=note.updated_at or datetime.now(UTC),
         )
         stored_status = NoteStatus(note.status)
@@ -179,16 +196,27 @@ def _content_from_draft(draft: NoteDraftDto) -> dict[str, object]:
     return draft.model_dump(
         mode="json",
         include={
+            "domain_id",
             "topic_angle",
             "title_candidates",
             "body",
             "hashtags",
             "cover_copy",
             "image_suggestions",
+            "content_brief",
             "style_form",
             "review",
+            "user_issue",
         },
     )
+
+
+def _source_from_draft(draft: NoteDraftDto) -> dict[str, object]:
+    if draft.source is not None:
+        return draft.source.model_dump(mode="json")
+    return {
+        "content_brief": draft.content_brief.model_dump(mode="json") if draft.content_brief else {}
+    }
 
 
 class SqlAlchemyFieldSuggestionRepository:

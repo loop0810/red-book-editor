@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from red_book_editor_server.domain.contracts import SourceExperienceDto
+from red_book_editor_server.domain.contracts import ContentBriefDto, SourceExperienceDto
 from red_book_editor_server.modules.content_workflow.styling.decorator import (
     _required_facts,
 )
@@ -64,19 +64,21 @@ def automatic_hard_failures(case: dict[str, Any], record: dict[str, Any]) -> lis
 def fact_coverage(case: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
     """Return deterministic source-fact coverage without claiming semantic completeness."""
 
+    brief_payload = case.get("content_brief")
     source = case.get("source")
-    if not isinstance(source, dict):
+    if not isinstance(brief_payload, dict) and not isinstance(source, dict):
         return {"covered": 0, "total": 0, "ratio": 0.0, "facts": []}
     try:
-        source_dto = SourceExperienceDto.model_validate(source)
-        required = _required_facts(source_dto)
+        brief = (
+            ContentBriefDto.model_validate(brief_payload)
+            if isinstance(brief_payload, dict)
+            else SourceExperienceDto.model_validate(source)
+        )
+        required = _required_facts(brief)
     except (TypeError, ValueError):
         return {"covered": 0, "total": 0, "ratio": 0.0, "facts": []}
     text = _compact(_draft_text(record.get("draft")))
-    facts = [
-        {"fact": fact, "covered": _contains_fact(fact, text)}
-        for fact in required
-    ]
+    facts = [{"fact": fact, "covered": _contains_fact(fact, text)} for fact in required]
     covered = sum(1 for item in facts if item["covered"])
     return {
         "covered": covered,
@@ -107,7 +109,15 @@ def _draft_text(draft: Any) -> str:
 
 
 def _case_has_missing_source_fact(case: dict[str, Any], text: str) -> bool:
+    brief_payload = case.get("content_brief")
     source = case.get("source")
+    if isinstance(brief_payload, dict):
+        focus = brief_payload.get("focus")
+        if not isinstance(focus, str):
+            return False
+        clauses = [part for part in re.split(r"[，,；;。！？!?]+", focus) if part.strip()]
+        normalized_text = _compact(text)
+        return any(not _contains_fact(clause, normalized_text) for clause in clauses)
     if not isinstance(source, dict):
         return False
     normalized_text = _compact(text)

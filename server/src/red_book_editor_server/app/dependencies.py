@@ -18,7 +18,7 @@ async def database_session(request: Request) -> AsyncIterator[AsyncSession]:
 
 
 def build_model_gateway(settings: Settings) -> ModelGateway:
-    """按配置选择模型网关：deepseek 走真实适配器，其余回退 stub。"""
+    """按配置选择模型网关；stub 仅用于测试和明确的离线开发。"""
 
     if settings.model_provider == "deepseek":
         if not settings.model_api_key:

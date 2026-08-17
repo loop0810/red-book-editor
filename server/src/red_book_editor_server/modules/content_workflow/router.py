@@ -4,19 +4,21 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from red_book_editor_server.app.config import get_settings
 from red_book_editor_server.app.dependencies import build_model_gateway, database_session
 from red_book_editor_server.domain.contracts import (
+    ContentBriefDto,
     FieldSuggestionDto,
     NoteDraftDto,
     SourceExperienceDto,
     SuggestionStatusUpdateDto,
-    StyledNoteResponseDto,
     StyleForm,
+    UserResultResponseDto,
 )
+from red_book_editor_server.domain.strategy import DomainUnavailableError
 from red_book_editor_server.domain.ports import ModelGatewayError
 from red_book_editor_server.infrastructure.repositories import (
     SqlAlchemyAccountColumnContextRepository,
@@ -34,11 +36,18 @@ router = APIRouter(prefix="/api/v1/notes", tags=["notes"])
 
 
 class GenerateNoteRequest(BaseModel):
-    # 这是 HTTP 层的输入契约：账号/栏目决定上下文，source 是事实，form 是文风。
+    # 新客户端提交 ContentBrief；source 只作为旧客户端兼容入口。
     account_id: UUID
     column_id: UUID
     form: StyleForm
-    source: SourceExperienceDto
+    content_brief: ContentBriefDto | None = None
+    source: SourceExperienceDto | None = None
+
+    @model_validator(mode="after")
+    def require_content_input(self) -> "GenerateNoteRequest":
+        if self.content_brief is None and self.source is None:
+            raise ValueError("content_brief_required")
+        return self
 
 
 class RestyleNoteRequest(BaseModel):
@@ -58,45 +67,50 @@ class RegenerateFieldRequest(BaseModel):
         return self.form or self.style_form
 
 
-@router.post("/generate", response_model=StyledNoteResponseDto)
+@router.post("/generate", response_model=UserResultResponseDto)
 async def generate_note(
     request: GenerateNoteRequest,
     session: AsyncSession = Depends(database_session),
-) -> StyledNoteResponseDto:
+) -> UserResultResponseDto:
     settings = get_settings()
-    service = _build_service(settings, session=session)
     try:
+        service = _build_service(settings, session=session)
         result = await service.generate(
             account_id=request.account_id,
             column_id=request.column_id,
+            brief=request.content_brief,
             source=request.source,
             form=request.form,
         )
         # 主生成入口现在和账号工作台一样持久化 NoteModel + 初始版本，
         # 因此返回的 note_id 可以直接用于保存、列表和恢复。
         persisted = await SqlAlchemyNoteRepository(session).create(result.draft)
-    except WorkflowContextError as error:
+    except (WorkflowContextError, DomainUnavailableError) as error:
         raise _context_http_error(error) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
+        ) from error
     except (ContentGenerationError, ModelGatewayError) as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="content_generation_failed",
         ) from error
-    return StyledNoteResponseDto(draft=persisted, agent_trace=result.agent_trace)
+    return UserResultResponseDto.from_draft(persisted)
 
 
-@router.post("/style", response_model=StyledNoteResponseDto)
-async def restyle_note(request: RestyleNoteRequest) -> StyledNoteResponseDto:
+@router.post("/style", response_model=UserResultResponseDto)
+async def restyle_note(request: RestyleNoteRequest) -> UserResultResponseDto:
     settings = get_settings()
-    service = _build_service(settings)
     try:
+        service = _build_service(settings)
         result = await service.restyle(request.draft, request.form)
     except (ContentGenerationError, ModelGatewayError) as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="content_generation_failed",
         ) from error
-    return result.as_response()
+    return UserResultResponseDto.from_draft(result.draft)
 
 
 @router.post("/regenerate-field", response_model=FieldSuggestionDto)
@@ -105,8 +119,8 @@ async def regenerate_field(
     session: AsyncSession = Depends(database_session),
 ) -> FieldSuggestionDto:
     settings = get_settings()
-    service = _build_service(settings)
     try:
+        service = _build_service(settings)
         suggestion = await service.regenerate_field(
             request.draft,
             request.field,
@@ -180,8 +194,8 @@ def _build_service(settings: object, session: AsyncSession | None = None) -> Con
     )
 
 
-def _context_http_error(error: WorkflowContextError) -> HTTPException:
-    code = error.code
+def _context_http_error(error: WorkflowContextError | DomainUnavailableError) -> HTTPException:
+    code = error.code if isinstance(error, WorkflowContextError) else str(error)
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=code,

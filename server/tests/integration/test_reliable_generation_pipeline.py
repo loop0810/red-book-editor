@@ -50,6 +50,35 @@ def _account_and_column(client: TestClient) -> tuple[str, str]:
 
 
 @pytest.mark.integration
+def test_first_use_can_create_account_and_default_column(client: TestClient) -> None:
+    account = client.post(
+        "/api/v1/accounts",
+        json={
+            "positioning": "记录真实育儿生活",
+            "tone": "真实、自然",
+            "current_baby_month": 0,
+        },
+    )
+    assert account.status_code == 201
+    account_id = account.json()["account_id"]
+
+    column = client.post(
+        f"/api/v1/accounts/{account_id}/columns",
+        json={
+            "name": "日常分享",
+            "description": "记录真实经历与实用经验",
+            "content_types": ["note"],
+        },
+    )
+    assert column.status_code == 201
+    assert column.json()["account_id"] == account_id
+    assert (
+        client.get(f"/api/v1/accounts/{account_id}/columns").json()[0]["column_id"]
+        == column.json()["column_id"]
+    )
+
+
+@pytest.mark.integration
 def test_main_generate_save_list_reload_and_versions(client: TestClient) -> None:
     account_id, column_id = _account_and_column(client)
     generated = client.post(
@@ -64,10 +93,8 @@ def test_main_generate_save_list_reload_and_versions(client: TestClient) -> None
     assert generated.status_code == 200
     draft = generated.json()["draft"]
     assert draft["style_form"] == "experience"
-    assert draft["review"] is not None
-    assert draft["review"]["claim_audit"]
-    assert draft["review"]["source_digest"]
-    assert draft["review"]["content_digest"]
+    assert draft["content_brief"]["focus"] == _source()["scenario"]
+    assert "review" not in draft
     assert draft["status"] == "ready"
     note_id = draft["note_id"]
 
@@ -84,7 +111,7 @@ def test_main_generate_save_list_reload_and_versions(client: TestClient) -> None
         },
     )
     assert saved.status_code == 200
-    assert saved.json()["status"] == "needs_review"
+    assert saved.json()["status"] == "ready"
     assert saved.json()["style_form"] == "experience"
 
     listed = client.get(f"/api/v1/accounts/{account_id}/notes")
@@ -131,7 +158,9 @@ def test_account_workbench_and_main_generation_share_persistence_semantics(
     assert main_draft["column_id"] == workbench_draft["column_id"] == column_id
     assert main_draft["style_form"] == workbench_draft["style_form"] == "experience"
     assert main_draft["status"] == workbench_draft["status"]
-    assert main_draft["review"] == workbench_draft["review"]
+    assert main_draft["content_brief"] == workbench_draft["content_brief"]
+    assert "review" not in main_draft
+    assert "review" not in workbench_draft
 
 
 @pytest.mark.integration
@@ -262,7 +291,7 @@ def test_export_gate_blocks_missing_review_and_blocking_review(client: TestClien
 
 
 @pytest.mark.integration
-def test_warning_review_stays_needs_review_and_keeps_export_reasoning(
+def test_warning_review_is_ready_without_an_irrelevant_user_warning(
     client: TestClient,
 ) -> None:
     account_id, column_id = _account_and_column(client)
@@ -275,11 +304,12 @@ def test_warning_review_stays_needs_review_and_keeps_export_reasoning(
     )
     assert created.status_code == 201
     draft = created.json()
-    assert draft["status"] == "needs_review"
-    assert any(finding["level"] == "warning" for finding in draft["review"]["findings"])
+    assert draft["status"] == "ready"
+    assert "review" not in draft
     exported = client.get(f"/api/v1/notes/{draft['note_id']}/export")
     assert exported.status_code == 200
-    assert exported.json()["status"] == "needs_review"
+    assert exported.json()["status"] == "ready"
+    assert "review" not in exported.json()
 
 
 @pytest.mark.integration
@@ -328,7 +358,7 @@ def test_legacy_review_is_readable_but_cannot_remain_ready(client: TestClient) -
     cast(Any, client).portal.call(replace_with_legacy_review)
     reopened = client.get(f"/api/v1/notes/{note_id}")
     assert reopened.status_code == 200
-    assert reopened.json()["review"]["claim_audit"] == []
+    assert "review" not in reopened.json()
     assert reopened.json()["status"] == "needs_review"
 
     exported = client.get(f"/api/v1/notes/{note_id}/export")

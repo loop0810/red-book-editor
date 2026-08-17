@@ -27,10 +27,12 @@ class AccountModel(Base):
     __tablename__ = "accounts"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    domain_id: Mapped[str] = mapped_column(String(64), default="parenting")
+    domain_context: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     positioning: Mapped[str] = mapped_column(Text)
-    min_age_months: Mapped[int] = mapped_column(Integer)
-    max_age_months: Mapped[int] = mapped_column(Integer)
-    current_baby_month: Mapped[int] = mapped_column(Integer)
+    min_age_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_age_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    current_baby_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tone: Mapped[str] = mapped_column(Text)
     boundaries: Mapped[list[str]] = mapped_column(JSONB, default=list)
     common_expressions: Mapped[list[str]] = mapped_column(JSONB, default=list)

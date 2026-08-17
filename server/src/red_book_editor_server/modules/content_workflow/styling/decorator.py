@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import re
 
-from red_book_editor_server.domain.contracts import SourceExperienceDto, StyleProfile
+from red_book_editor_server.domain.contracts import (
+    ContentBriefDto,
+    SourceExperienceDto,
+    StyleProfile,
+)
 from red_book_editor_server.modules.content_workflow.styling.models import (
     DraftContent,
     FinalizeArgs,
@@ -24,7 +28,9 @@ def apply_decorator(finalized: FinalizeArgs, profile: StyleProfile) -> FinalizeA
     return finalized.model_copy(update={"draft": draft})
 
 
-def check_facts(source: SourceExperienceDto, draft: DraftContent) -> tuple[bool, list[str]]:
+def check_facts(
+    source: ContentBriefDto | SourceExperienceDto, draft: DraftContent
+) -> tuple[bool, list[str]]:
     """核对关键来源事实是否出现在草稿中。"""
 
     text = "\n".join([draft.topic_angle, *draft.title_candidates, draft.body])
@@ -45,7 +51,11 @@ def _compact(value: str) -> str:
     return re.sub(r"[\s，。！？、,.!?；;：:（）()\[\]【】]", "", value)
 
 
-def _required_facts(source: SourceExperienceDto) -> list[str]:
+def _required_facts(source: ContentBriefDto | SourceExperienceDto) -> list[str]:
+    if isinstance(source, ContentBriefDto):
+        facts = _split_fact_clauses(source.focus)
+        facts.extend(_split_fact_clauses(source.raw_material))
+        return [fact for fact in facts if fact]
     facts = _split_fact_clauses(source.scenario)
     facts.append(str(source.baby_month))
     for action in source.actions:

@@ -40,7 +40,7 @@ class _DraftListPageState extends State<DraftListPage> {
   String _titleOf(NoteDraft draft) {
     if (draft.titleCandidates.isNotEmpty) return draft.titleCandidates.first;
     if (draft.topicAngle.isNotEmpty) return draft.topicAngle;
-    return draft.source.scenario;
+    return draft.focus;
   }
 
   String _statusLabel(NoteStatus status) {
@@ -114,7 +114,7 @@ class _DraftListPageState extends State<DraftListPage> {
                       if (draft.styleForm != null)
                         '表达形式：${styleFormDisplayName(draft.styleForm!)}',
                       if (_reviewLabel(draft).isNotEmpty) _reviewLabel(draft),
-                      draft.body.isEmpty ? draft.source.scenario : draft.body,
+                      draft.body.isEmpty ? draft.focus : draft.body,
                     ].join(' · '),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
