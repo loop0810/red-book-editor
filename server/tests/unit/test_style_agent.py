@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import pytest
 
 from red_book_editor_server.domain.agent import AgentRunError
-from red_book_editor_server.domain.contracts import SourceExperienceDto, StyleForm
+from red_book_editor_server.domain.contracts import ContentBriefDto, SourceExperienceDto, StyleForm
 from red_book_editor_server.modules.content_workflow.styling.agent import (
     _extract_json,
     style_draft,
@@ -134,6 +135,60 @@ async def test_fact_violation_triggers_revision_loop() -> None:
     feedback = gateway.calls[1][0][-1]["content"]
     assert isinstance(feedback, str)
     assert "校验失败" in feedback or "事实缺失" in feedback
+
+
+@pytest.mark.asyncio
+async def test_copied_opening_triggers_revision_before_finalize() -> None:
+    brief = ContentBriefDto(
+        focus="宝宝周岁宴",
+        raw_material="没有邀请很多人，只邀请父母和朋友参加周岁宴，大家都很开心。",
+    )
+    invalid = _final_payload()
+    base_draft = cast(dict[str, object], invalid["draft"])
+    invalid["draft"] = {
+        **base_draft,
+        "topic_angle": "宝宝周岁宴的取舍记录",
+        "title_candidates": [
+            "宝宝周岁宴：只请家人朋友",
+            "宝宝周岁宴怎么安排",
+            "宝宝周岁宴真实记录",
+        ],
+        "body": brief.raw_material + "\n\n这次先把记录整理出来。",
+        "hashtags": ["#宝宝周岁宴", "#成长记录", "#家庭聚会", "#生活记录"],
+        "cover_copy": "宝宝周岁宴｜小范围聚会怎么记",
+        "image_suggestions": [
+            "宝宝周岁宴的餐桌细节",
+            "父母和朋友围坐的合照",
+            "当天记录周岁宴的物件近景",
+        ],
+    }
+    invalid_draft = cast(dict[str, object], invalid["draft"])
+    invalid["image_suggestions"] = invalid_draft["image_suggestions"]
+    valid = json.loads(json.dumps(invalid, ensure_ascii=False))
+    valid_draft = cast(dict[str, object], valid["draft"])
+    valid_draft["body"] = (
+        "周岁这件事，我们更想把聚会规模和参与的人讲清楚。\n\n"
+        "没有邀请很多人，也只邀请父母和朋友参加周岁宴。\n\n"
+        "最后留下的观察很简单：大家都很开心。"
+    )
+    gateway = ScriptedGateway(
+        [
+            text_response(json.dumps(invalid, ensure_ascii=False)),
+            text_response(json.dumps(valid, ensure_ascii=False)),
+        ]
+    )
+
+    result = await style_draft(
+        gateway,
+        brief=brief,
+        neutral_draft=None,
+        form=StyleForm.EXPERIENCE,
+    )
+
+    assert isinstance(result.result, FinalizeArgs)
+    feedback = gateway.calls[1][0][-1]["content"]
+    assert isinstance(feedback, str)
+    assert "开头直接复用" in feedback
 
 
 def test_extract_json_accepts_markdown_fence() -> None:

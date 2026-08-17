@@ -169,6 +169,41 @@ void main() {
       expect(body['form'], 'experience');
     });
 
+    test(
+      'generateNote sends the unchanged ContentBrief request shape',
+      () async {
+        final requests = <http.Request>[];
+        final client = _client((request) async {
+          requests.add(request);
+          return http.Response(
+            jsonEncode(_styledResponseJson),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        });
+
+        await client.generateNote(
+          accountId: _accountId,
+          columnId: _columnId,
+          contentBrief: const ContentBrief(
+            focus: '宝宝周岁宴',
+            rawMaterial: '周岁，父母，晚餐，大家开心',
+            domainContext: {'baby_month': 12},
+          ),
+          form: StyleForm.experience,
+        );
+
+        final body = jsonDecode(requests.single.body) as Map<String, dynamic>;
+        expect(body['content_brief'], {
+          'focus': '宝宝周岁宴',
+          'raw_material': '周岁，父母，晚餐，大家开心',
+          'domain_context': {'baby_month': 12},
+          'asset_ids': <dynamic>[],
+        });
+        expect(body.containsKey('source'), isFalse);
+      },
+    );
+
     test('generateNote parses styled response with agent trace', () async {
       final client = _client((request) async {
         return http.Response(

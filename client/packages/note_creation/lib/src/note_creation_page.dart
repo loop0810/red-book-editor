@@ -101,7 +101,7 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
         ? _rawMaterialController.text.trim()
         : '';
     if (focus.isEmpty || rawMaterial.isEmpty) {
-      setState(() => _error = '请先填写内容主题和原始素材');
+      setState(() => _error = '请先填写内容主题和内容素材');
       return;
     }
     setState(() {
@@ -255,8 +255,8 @@ class _NoteCreationPageState extends State<NoteCreationPage> {
             controller: _rawMaterialController,
             maxLines: 5,
             decoration: const InputDecoration(
-              labelText: '原始正文',
-              hintText: '把想表达的内容一次写下来，事实、过程、感受都可以放在这里',
+              labelText: '内容素材',
+              hintText: '关键词、流水账、几句话都可以，不需要先写成完整文案',
             ),
           ),
           const SizedBox(height: 16),

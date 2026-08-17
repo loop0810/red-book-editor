@@ -169,5 +169,72 @@
       "把未提供的情绪或祝福写成真实发生",
       "夸大成一次改变家庭关系的经历"
     ]
+  },
+  {
+    "case_id": "case-06-keyword-birthday",
+    "form": "experience",
+    "input_shape": "keywords",
+    "content_brief": {
+      "focus": "宝宝周岁宴",
+      "raw_material": "周岁，父母，晚餐，大家开心",
+      "domain_context": {"baby_month": 12}
+    },
+    "source": {
+      "baby_month": 12,
+      "scenario": "宝宝周岁了",
+      "actions": ["邀请父母一起吃晚餐"],
+      "observations": "大家都很开心",
+      "notes": ""
+    },
+    "expected_behavior": "expand_keywords_without_inventing_event_details",
+    "must_preserve": [
+      "宝宝周岁",
+      "邀请父母吃晚餐",
+      "大家开心"
+    ],
+    "unknown_facts": ["地点、菜品、布置和流程", "宝宝当天的具体表现"],
+    "forbidden_inferences": ["编造宴会流程", "补写未提供的宝宝反应"]
+  },
+  {
+    "case_id": "case-07-one-sentence-flight",
+    "form": "experience",
+    "input_shape": "one_sentence",
+    "content_brief": {
+      "focus": "宝宝第一次坐飞机",
+      "raw_material": "买票后收拾行李，登机后宝宝一路睡着。",
+      "domain_context": {"baby_month": 14}
+    },
+    "source": {
+      "baby_month": 14,
+      "scenario": "宝宝第一次坐飞机",
+      "actions": ["买票后收拾行李", "登机"],
+      "observations": "宝宝一路睡着",
+      "notes": ""
+    },
+    "expected_behavior": "turn_one_sentence_into_a_structured_story",
+    "must_preserve": ["第一次坐飞机", "收拾行李", "登机", "一路睡着"],
+    "unknown_facts": ["航班、目的地、飞行时长和具体行李清单"],
+    "forbidden_inferences": ["编造目的地", "声称飞行准备适合所有家庭"]
+  },
+  {
+    "case_id": "case-08-polished-source",
+    "form": "popular_science",
+    "input_shape": "already_polished",
+    "content_brief": {
+      "focus": "为学走路的宝宝挑鞋",
+      "raw_material": "宝宝最近总扶着围栏站起来，我查了资料，也跑了几家店，最后按宝宝穿着时的实际感受挑了一双鞋。没有追求大牌，只记录这次选择。",
+      "domain_context": {"baby_month": 11}
+    },
+    "source": {
+      "baby_month": 11,
+      "scenario": "宝宝想要站起来走路",
+      "actions": ["查阅资料", "跑了几家店", "按宝宝穿着时的实际感受挑鞋"],
+      "observations": "宝宝总扶着围栏站起来",
+      "notes": "没有追求大牌，只记录这次选择"
+    },
+    "expected_behavior": "restructure_polished_source_without_flattening_it",
+    "must_preserve": ["扶着围栏站起来", "查资料", "跑店", "按实际感受挑鞋", "没有追求大牌"],
+    "unknown_facts": ["鞋子品牌、材质、价格和医学适配结论"],
+    "forbidden_inferences": ["伪造专家或研究观点", "把个人选择写成普遍标准"]
   }
 ]

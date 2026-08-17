@@ -15,6 +15,7 @@ from red_book_editor_server.domain.agent import (
 )
 from red_book_editor_server.domain.contracts import (
     ContentBriefDto,
+    FactKind,
     NoteDraftDto,
     NoteStatus,
     SourceExperienceDto,
@@ -22,12 +23,17 @@ from red_book_editor_server.domain.contracts import (
     StyleProfile,
 )
 from red_book_editor_server.domain.ports import ModelGateway
+from red_book_editor_server.modules.content_workflow.fact_ledger import build_fact_ledger
 from red_book_editor_server.modules.content_workflow.styling.decorator import (
     apply_decorator,
     check_facts,
 )
 from red_book_editor_server.modules.content_workflow.styling.models import FinalizeArgs
 from red_book_editor_server.modules.content_workflow.styling.profiles import load_style_profile
+from red_book_editor_server.modules.content_workflow.styling.quality import (
+    enrichment_issues,
+    source_overlap_issues,
+)
 from red_book_editor_server.modules.content_workflow.styling.tools import build_styling_tools
 
 SYSTEM_PROMPT = (
@@ -42,10 +48,13 @@ SYSTEM_PROMPT = (
     '"崔玉涛说"等具体背书；风格档案中的示例只是结构提示，不是本次经历的事实。\n'
     "领域安全相关经历只能如实记录用户提供的事情，"
     "不得用安全、放心、适合照做或保证结果的表达包装风险做法。\n"
-    "1.1 素材完整性：raw_material 是正文的完整事实来源，必须保留其中的关键场景、"
-    "动作、观察、取舍和限制；可以换说法和调整顺序，但不能为了简短而只剩一句摘要。"
-    "focus 是标题第一优先级，raw_material 中的限制条件只能作为正文细节，除非 focus 明确要求，"
-    "不能反客为主成为标题主题。\n"
+    "1.1 素材语义：raw_material 是用户的事实便签、关键词或流水账，不是需要原样复用的成稿。"
+    "先在内部整理 confirmed/observed/constraint/opinion 等来源单元，再确定 focus 对应的叙事角度和正文结构，"
+    "最后从事实单元重新起草；不能把原始第一句话直接当作正文开头。focus 是标题第一优先级，"
+    "raw_material 中的限制条件只能作为正文细节，除非 focus 明确要求，不能反客为主成为标题主题。\n"
+    "1.2 编辑性丰富边界：可以增加连接句、段落结构、叙事钩子、重新排序和由已知事实直接支持的中性总结；"
+    "不得增加用户未提供的具体人物、地点、动作、对话、礼物、结果、时间线、专业背书或真实情绪。"
+    "不要通过复制原文来满足正文长度。\n"
     "2. 必须先调用 load_style_profile 读取所选表达形式的风格档案，"
     "严格按档案的钩子、结构、语气、富文本与封面规则写作。\n"
     "3. 起草内容时调用 critique_draft（draft 必须包含 topic_angle、"
@@ -56,14 +65,14 @@ SYSTEM_PROMPT = (
     " tag_count_range 内。\n"
     "5. 只有 critique passed=true 后才能调用 finalize_note 确认内容，"
     "然后以与 finalize_note 入参相同结构的 JSON 对象作为最终回答。\n"
-    "6. 至少给出 3 个围绕 focus 的标题候选；正文要有完整的开头、过程细节、"
-    "真实感受/观察和收束，不得短于原始素材的两倍（最少 100 个字符）；"
+    "6. 至少给出 3 个围绕 focus 的标题候选；正文要有经过重新组织的开头、过程细节、"
+    "真实感受/观察和收束，不得把用户输入拆段后原样粘贴；短素材也要形成完整结构。"
     "封面文案不能只重复 focus；配图建议至少 3 条，必须对应本次素材中的场景、"
     "动作、物件或细节，不能使用‘场景照片/过程记录’这种空泛模板。\n"
     '7. 最终回答必须是合法 JSON：{"form": "...", "draft": {...},'
     ' "image_suggestions": [...]}。'
 )
-STYLING_PROMPT_VERSION = "styling-system-v1"
+STYLING_PROMPT_VERSION = "styling-system-v2"
 STYLING_AGENT_CONFIG_VERSION = "styling-agent-config-v1"
 STYLING_AGENT_CONFIG = {
     "max_steps": 12,
@@ -107,6 +116,7 @@ async def style_draft(
             neutral_draft=neutral_draft,
             form=form,
             profile_display=profile.display_name,
+            rewrite_rules=profile.rewrite_rules,
             account_context=account_context,
             column_context=column_context,
         ),
@@ -158,6 +168,7 @@ def _build_user_prompt(
     neutral_draft: NoteDraftDto | None,
     form: StyleForm,
     profile_display: str,
+    rewrite_rules: list[str],
     account_context: str,
     column_context: str,
 ) -> str:
@@ -167,10 +178,13 @@ def _build_user_prompt(
         f"表达形式：{profile_display}（{form.value}）",
         f"账号定位：{account_context or '以用户主题和原始素材为中心的内容账号'}",
         f"栏目说明：{column_context or '无'}",
-        "写作任务：标题先抓住 focus；正文完整吸收 raw_material，保留每个具体事实、动作、观察和限制，"
-        "不要把用户提供的内容压缩成一句泛泛总结。请输出 3 个以上标题候选、完整正文、"
+        f"风格专属改写规则：{json.dumps(rewrite_rules, ensure_ascii=False)}",
+        "写作任务：先阅读服务端整理的素材理解卡，确认事实、观察、限制和观点，再选择 focus 对应的内容角度和结构。"
+        "raw_material 只是粗略素材，不是成稿；请重新组织语言，正文第一段不得直接复制用户输入。"
+        "保留关键事实、动作、观察和限制，但不要把用户提供的内容压缩成一句泛泛总结。请输出 3 个以上标题候选、完整正文、"
         "符合主题的话题、带有具体信息的封面文案，以及至少 3 条与本次素材直接对应的配图建议。",
         f"本次内容简报（ContentBrief）：\n{brief.model_dump_json(indent=2)}",
+        f"素材理解卡（仅作事实索引，不是正文模板）：\n{_material_context(brief)}",
     ]
     if neutral_draft is not None:
         parts.append(
@@ -178,6 +192,40 @@ def _build_user_prompt(
         )
     parts.append("请先调用 load_style_profile 开始。")
     return "\n\n".join(parts)
+
+
+def _material_context(brief: ContentBriefDto | SourceExperienceDto) -> str:
+    """Build a deterministic fact index so the model can rewrite instead of quote."""
+
+    ledger = build_fact_ledger(brief)
+    source_facts = [
+        {
+            "kind": fact.kind.value,
+            "text": fact.text,
+            "source_path": fact.source_path,
+        }
+        for fact in ledger.facts
+        if fact.kind
+        in {
+            FactKind.CONFIRMED,
+            FactKind.OBSERVED,
+            FactKind.OPINION,
+            FactKind.CONSTRAINT,
+        }
+        and fact.fact_id != "brief.raw_material"
+    ]
+    return json.dumps(
+        {
+            "focus": brief.focus if isinstance(brief, ContentBriefDto) else brief.scenario,
+            "source_units": source_facts,
+            "do_not_infer": [
+                "未提供的具体活动、人物、地点、对话、结果和时间线",
+                "来源外的专业背书、确定因果和普遍适用结论",
+            ],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 def _make_final_validator(
@@ -210,11 +258,6 @@ def _quality_issues(
 
     draft = finalized.draft
     focus = brief.focus if isinstance(brief, ContentBriefDto) else brief.scenario
-    material = (
-        brief.raw_material
-        if isinstance(brief, ContentBriefDto)
-        else "；".join([*brief.actions, brief.observations, brief.notes])
-    ).strip()
     issues: list[str] = []
     if len(draft.title_candidates) < 3:
         issues.append("标题候选至少需要 3 个")
@@ -222,8 +265,8 @@ def _quality_issues(
         issues.append("标题候选必须明确围绕内容主题")
     if _compact(focus) not in _compact(draft.topic_angle):
         issues.append("选题角度必须明确围绕内容主题")
-    if len(draft.body) < max(100, len(material) * 2):
-        issues.append("正文过短，必须保留原始素材的完整信息并展开过程细节")
+    issues.extend(enrichment_issues(brief, draft.body))
+    issues.extend(source_overlap_issues(brief, draft.body))
     if not draft.cover_copy.strip() or _compact(draft.cover_copy) == _compact(focus):
         issues.append("封面文案不能只重复内容主题")
     if _compact(focus) not in _compact(draft.cover_copy):

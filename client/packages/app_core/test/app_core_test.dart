@@ -1,7 +1,14 @@
 import 'package:app_core/app_core.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
 void main() {
+  setUp(() {
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.empty();
+  });
+
   test('uses the local development API by default', () {
     final client = RedBookEditorApiClient();
     expect(client.baseUrl, 'http://127.0.0.1:8100');
@@ -72,4 +79,23 @@ void main() {
     expect(response.draft.review, isNull);
     expect(response.agentTrace, isEmpty);
   });
+
+  test(
+    'ContentBrief draft storage preserves rough material for recovery',
+    () async {
+      final store = ContentBriefDraftStore();
+      const brief = ContentBrief(
+        focus: '宝宝周岁宴',
+        rawMaterial: '周岁，父母，晚餐，大家开心',
+        domainContext: {'baby_month': 12},
+      );
+
+      await store.save(brief);
+      final restored = await store.load();
+
+      expect(restored?.focus, brief.focus);
+      expect(restored?.rawMaterial, brief.rawMaterial);
+      expect(restored?.domainContext['baby_month'], 12);
+    },
+  );
 }

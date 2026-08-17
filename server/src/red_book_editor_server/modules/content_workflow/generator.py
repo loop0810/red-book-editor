@@ -72,10 +72,14 @@ class StubContentGenerator:
         material = normalized.raw_material
         clauses = _material_clauses(material)
         focus_tag = _focus_tag(focus)
+        detail_lines = "\n".join(
+            f"{index}. {rewrite_material_clause(clause)}"
+            for index, clause in enumerate(clauses, start=1)
+        )
         body_sections = [
-            f"这次想记录的是：{focus}。",
-            "\n".join(f"· {clause}" for clause in clauses),
-            "这篇先把原始素材完整整理下来，方便之后继续补充细节。",
+            f"关于{focus}，这篇先从这次记录里最明确的事实开始梳理。",
+            f"记录中的重点可以拆成几个信息点：\n{detail_lines}",
+            f"把这些信息串起来，内容主线仍然是{focus}；没有提供的细节不在这里补写。",
         ]
         return NoteDraftDto(
             note_id=uuid4(),
@@ -108,6 +112,17 @@ def _material_clauses(material: str) -> list[str]:
         clause.strip() for clause in re.split(r"[\n。！？!?；;]+", material) if clause.strip()
     ]
     return clauses or [material.strip()]
+
+
+def rewrite_material_clause(clause: str) -> str:
+    """Turn a rough clause into a labelled detail for the offline placeholder."""
+
+    fragments = [fragment.strip() for fragment in re.split(r"[，,]", clause) if fragment.strip()]
+    if len(fragments) > 1:
+        return "；".join(
+            f"{label}是{fragment}" for label, fragment in zip(("过程", "取舍", "观察"), fragments)
+        )
+    return f"这条记录明确提到“{clause}”"
 
 
 def _focus_tag(focus: str) -> str:

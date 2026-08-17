@@ -21,6 +21,10 @@ from red_book_editor_server.modules.content_workflow.styling.models import (
     SuggestTagsArgs,
 )
 from red_book_editor_server.modules.content_workflow.styling.profiles import load_style_profile
+from red_book_editor_server.modules.content_workflow.styling.quality import (
+    enrichment_issues,
+    source_overlap_issues,
+)
 
 _NUMBERED_ITEM = re.compile(r"(?m)^\s*\d+[.、．)）]")
 _BULLET = re.compile(r"[•·●◆]")
@@ -171,19 +175,14 @@ async def critique_draft_tool(args: dict[str, object]) -> str:
         if isinstance(parsed.source, ContentBriefDto)
         else parsed.source.scenario
     )
-    material = (
-        parsed.source.raw_material
-        if isinstance(parsed.source, ContentBriefDto)
-        else "；".join([*parsed.source.actions, parsed.source.observations, parsed.source.notes])
-    ).strip()
     if len(draft.title_candidates) < 3:
         issues.append("标题候选至少需要 3 个")
     if not any(_compact(focus) in _compact(title) for title in draft.title_candidates):
         issues.append("标题候选必须明确围绕内容主题")
     if _compact(focus) not in _compact(draft.topic_angle):
         issues.append("选题角度必须明确围绕内容主题")
-    if len(draft.body) < max(100, len(material) * 2):
-        issues.append("正文过短，必须保留原始素材的完整信息并展开过程细节")
+    issues.extend(enrichment_issues(parsed.source, draft.body))
+    issues.extend(source_overlap_issues(parsed.source, draft.body))
     if not draft.cover_copy.strip() or _compact(draft.cover_copy) == _compact(focus):
         issues.append("封面文案不能只重复内容主题")
     if _compact(focus) not in _compact(draft.cover_copy):

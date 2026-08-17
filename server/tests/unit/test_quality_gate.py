@@ -19,8 +19,8 @@ def _payload() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dic
         "model": manifest["model"],
         "model_max_tokens": manifest["model_max_tokens"],
         "scorecard_version": manifest["scorecard_version"],
-        "prompt_version": "styling-system-v1",
-        "profile_version": "style-profiles-v1",
+        "prompt_version": "styling-system-v2",
+        "profile_version": "style-profiles-v2",
         "agent_runtime_version": "agent-runtime-v1",
         "agent_config_version": "styling-agent-config-v1",
         "cases_sha256": manifest["expected_digests"]["cases_sha256"],
@@ -66,6 +66,9 @@ def _payload() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dic
                             "focus_alignment",
                             "account_style_fit",
                             "factual_fidelity",
+                            "source_transformation",
+                            "enrichment_usefulness",
+                            "source_overlap_rate",
                             "safety",
                             "structure",
                             "naturalness",
@@ -73,7 +76,7 @@ def _payload() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dic
                             "edit_cost",
                         )
                     },
-                    "total": 16,
+                    "total": 22,
                     "hard_failures": [],
                     "failure_reason": "none",
                     "final_edited_draft": "reviewed final draft",
@@ -92,7 +95,7 @@ def _payload() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dic
     }
     scores = {
         "schema_version": 2,
-        "scorecard_version": "scorecard-v2",
+        "scorecard_version": "scorecard-v3",
         "run_id": "quality-test",
         "records": score_records,
     }
@@ -107,7 +110,7 @@ def test_quality_gate_passes_complete_evidence() -> None:
     assert report["gate"] == "passed"
     assert report["issues"] == []
     assert report["metrics"]["fact_coverage"] == 1.0
-    assert report["metrics"]["total_tokens"] == 200
+    assert report["metrics"]["total_tokens"] == 320
 
 
 def test_quality_gate_fails_version_drift_and_missing_usage() -> None:

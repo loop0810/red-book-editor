@@ -9,6 +9,7 @@ from red_book_editor_server.domain.contracts import (
     ClaimSupport,
     ContentBriefDto,
     EditableField,
+    FactKind,
     NoteDraftDto,
     NoteStatus,
     ReviewFindingDto,
@@ -34,6 +35,31 @@ from red_book_editor_server.modules.content_workflow.service import (
     ContentWorkflowService,
     StyleFormRequiredError,
 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("focus", "raw_material"),
+    [
+        ("宝宝周岁宴", "父母，晚餐"),
+        ("宝宝半夜醒来", "半夜醒来，记录体温，陪着照顾。"),
+        ("宝宝第一次坐飞机", "买票；收拾行李；登机；宝宝一路睡着。"),
+        ("宝宝学走路挑鞋", "不追求大牌，只看宝宝穿着是否舒服。"),
+        (
+            "宝宝周岁宴",
+            "宝宝周岁了。没有邀请很多人，只和父母吃饭。大家都很开心。",
+        ),
+    ],
+)
+async def test_stub_generator_transforms_rough_material(focus: str, raw_material: str) -> None:
+    brief = ContentBriefDto(focus=focus, raw_material=raw_material)
+
+    draft = await StubContentGenerator().generate(brief)
+
+    assert not draft.body.startswith(raw_material)
+    assert focus in draft.body
+    assert "原始素材里提到" not in draft.body
+    assert len(draft.body) > len(raw_material)
 
 
 @pytest.mark.asyncio
@@ -86,6 +112,20 @@ def test_content_brief_ledger_separates_constraints_from_raw_material() -> None:
     constraints = [fact for fact in ledger.facts if fact.kind.value == "constraint"]
     assert constraints
     assert any("不办大型酒宴" in fact.text for fact in constraints)
+
+
+def test_content_brief_ledger_classifies_explicit_material_kinds() -> None:
+    ledger = build_fact_ledger(
+        ContentBriefDto(
+            focus="宝宝周岁宴",
+            raw_material="不办大型酒宴。第二天大家都说很轻松。我更在意家人一起吃饭。",
+        )
+    )
+
+    kinds_by_text = {fact.text: fact.kind for fact in ledger.facts}
+    assert kinds_by_text["不办大型酒宴"] is FactKind.CONSTRAINT
+    assert kinds_by_text["第二天大家都说很轻松"] is FactKind.OBSERVED
+    assert kinds_by_text["我更在意家人一起吃饭"] is FactKind.OPINION
 
 
 def test_reviewer_allows_common_care_experience() -> None:

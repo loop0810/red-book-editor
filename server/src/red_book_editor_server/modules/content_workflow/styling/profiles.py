@@ -8,7 +8,7 @@ import yaml  # type: ignore[import-untyped]
 from red_book_editor_server.domain.contracts import StyleForm, StyleProfile
 
 _PROFILES_DIR = Path(__file__).resolve().parents[3] / "style_profiles"
-STYLE_PROFILE_VERSION = "style-profiles-v1"
+STYLE_PROFILE_VERSION = "style-profiles-v2"
 
 
 class StyleProfileNotFoundError(KeyError):

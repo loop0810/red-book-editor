@@ -58,6 +58,15 @@ def build_fact_ledger(source: SourceExperienceDto | ContentBriefDto) -> FactLedg
             text=brief.raw_material.strip(),
         ),
     ]
+    for index, clause in enumerate(_material_clauses(brief.raw_material)):
+        facts.append(
+            SourceFactDto(
+                fact_id=f"brief.raw_material[{index}]",
+                source_path=f"content_brief.raw_material[{index}]",
+                kind=_material_kind(clause),
+                text=clause,
+            )
+        )
     for index, clause in enumerate(_constraint_clauses(brief.raw_material)):
         facts.append(
             SourceFactDto(
@@ -247,12 +256,30 @@ def _compact(value: str) -> str:
 
 
 def _constraint_clauses(value: str) -> list[str]:
-    clauses = re.split(r"[。！？!?；;\n]+", value)
+    clauses = _material_clauses(value)
     return [
         clause.strip()
         for clause in clauses
         if clause.strip() and re.search(r"不|不要|无需|只想|仅|避免|不准备|不办", clause)
     ]
+
+
+def _material_clauses(value: str) -> list[str]:
+    """Split rough material into source units without rewriting their wording."""
+
+    return [clause.strip() for clause in re.split(r"[。！？!?；;\n]+", value) if clause.strip()]
+
+
+def _material_kind(clause: str) -> FactKind:
+    """Classify only explicit linguistic signals; unknown claims stay confirmed."""
+
+    if re.search(r"我觉得|我认为|对我来说|感觉|希望|想要|更在意|更喜欢", clause):
+        return FactKind.OPINION
+    if re.search(r"观察到|看到|发现|注意到|结果是|后来|第二天", clause):
+        return FactKind.OBSERVED
+    if re.search(r"不|不要|无需|只想|仅|避免|不准备|不办", clause):
+        return FactKind.CONSTRAINT
+    return FactKind.CONFIRMED
 
 
 def _digest(value: object) -> str:

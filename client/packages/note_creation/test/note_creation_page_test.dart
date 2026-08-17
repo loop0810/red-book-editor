@@ -42,7 +42,8 @@ void main() {
       expect(find.text('标题'), findsOneWidget);
       expect(find.text('正文'), findsOneWidget);
       expect(find.widgetWithText(TextField, '内容主题'), findsOneWidget);
-      expect(find.widgetWithText(TextField, '原始正文'), findsOneWidget);
+      expect(find.widgetWithText(TextField, '内容素材'), findsOneWidget);
+      expect(find.textContaining('关键词、流水账'), findsOneWidget);
       expect(find.text('发生了什么'), findsNothing);
       expect(find.text('我做了什么（可用逗号分隔）'), findsNothing);
       expect(find.text('观察到什么变化'), findsNothing);
@@ -71,7 +72,7 @@ void main() {
 
     await tester.enterText(find.widgetWithText(TextField, '内容主题'), '宝宝半夜发烧');
     await tester.enterText(
-      find.widgetWithText(TextField, '原始正文'),
+      find.widgetWithText(TextField, '内容素材'),
       '宝宝半夜发烧，我记录了体温并陪着照顾。',
     );
     await tester.scrollUntilVisible(
@@ -319,7 +320,7 @@ void main() {
     );
     await tester.enterText(find.widgetWithText(TextField, '内容主题'), '半夜醒来');
     await tester.enterText(
-      find.widgetWithText(TextField, '原始正文'),
+      find.widgetWithText(TextField, '内容素材'),
       '我记录了固定安抚流程。',
     );
     await tester.scrollUntilVisible(

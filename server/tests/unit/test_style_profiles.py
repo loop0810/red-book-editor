@@ -18,6 +18,7 @@ def test_all_profiles_load_and_validate() -> None:
         assert profile.display_name
         assert profile.hooks
         assert profile.structures
+        assert profile.rewrite_rules
         assert profile.tags.generic
         assert profile.tags.precise
         assert profile.tags.trending

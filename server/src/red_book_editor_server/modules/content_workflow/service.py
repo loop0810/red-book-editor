@@ -33,22 +33,24 @@ from red_book_editor_server.domain.contracts import (
     StyleForm,
     UserResultProjectionDto,
 )
-from red_book_editor_server.domain.strategy import DomainStrategyPack, DomainStrategyRegistry
 from red_book_editor_server.domain.ports import (
     AccountColumnContextPort,
     ContentGenerator,
     ModelGateway,
     ModelGatewayError,
 )
-from red_book_editor_server.modules.content_workflow.generator import (
-    ContentGenerationError,
-    StubContentGenerator,
-    generate_with_retry,
-    normalize_content_brief,
-)
+from red_book_editor_server.domain.strategy import DomainStrategyPack, DomainStrategyRegistry
 from red_book_editor_server.modules.content_workflow.fact_ledger import (
     content_digest,
     field_digest,
+)
+from red_book_editor_server.modules.content_workflow.generator import (
+    ContentGenerationError,
+    StubContentGenerator,
+    _material_clauses,
+    generate_with_retry,
+    normalize_content_brief,
+    rewrite_material_clause,
 )
 from red_book_editor_server.modules.content_workflow.review import (
     project_user_issue,
@@ -56,6 +58,7 @@ from red_book_editor_server.modules.content_workflow.review import (
     status_for_review,
 )
 from red_book_editor_server.modules.content_workflow.styling.agent import (
+    _material_context,
     finalize_to_note_draft,
     style_draft,
 )
@@ -65,6 +68,10 @@ from red_book_editor_server.modules.content_workflow.styling.models import (
     FinalizeArgs,
     HashtagsFieldResult,
     TitleFieldResult,
+)
+from red_book_editor_server.modules.content_workflow.styling.quality import (
+    enrichment_issues,
+    source_overlap_issues,
 )
 
 FieldName = Literal["title", "body", "hashtags", "cover_copy"]
@@ -221,8 +228,11 @@ class ContentWorkflowService:
             )
             candidate = candidate.model_copy(update={"domain_id": draft.domain_id})
         else:
-            candidate = draft.model_copy(update={"style_form": form})
-            trace = _stub_trace("MODEL_PROVIDER=stub：未调用模型，保留当前草稿内容")
+            values: dict[str, object] = {}
+            for field_name in ("title", "body", "hashtags", "cover_copy"):
+                values.update(_generate_stub_field(draft, field_name, form))
+            candidate = draft.model_copy(update={**values, "style_form": form})
+            trace = _stub_trace("MODEL_PROVIDER=stub：未调用模型，按当前素材重新组织草稿")
             diagnostics = AgentRunDiagnostics(
                 status=AgentRunStatus.COMPLETED,
                 phase=AgentPhase.DRAFT,
@@ -368,7 +378,8 @@ class ContentWorkflowService:
             {
                 "role": "system",
                 "content": (
-                    "你只负责重生成指定的一个笔记字段。只能使用 ContentBrief 中的事实，"
+                    "你只负责重生成指定的一个笔记字段。ContentBrief 中的 raw_material 是粗略素材，"
+                    "只能使用其中的事实，但必须重新组织语言；如果目标字段是正文，第一段不得直接复制素材，"
                     f"表达形式为 {form.value}。只输出合法 JSON，格式为 {schema}，不要输出其他字段。"
                 ),
             },
@@ -378,6 +389,7 @@ class ContentWorkflowService:
                     {
                         "field": field,
                         "content_brief": _brief_for_draft(draft).model_dump(mode="json"),
+                        "material_context": _material_context(_brief_for_draft(draft)),
                         "draft": draft.model_dump(mode="json"),
                     },
                     ensure_ascii=False,
@@ -406,6 +418,14 @@ class ContentWorkflowService:
                 return FinalValidation(
                     ok=False, error=f"invalid_field_schema:{type(error).__name__}"
                 )
+            if field == "body" and isinstance(result, BodyFieldResult):
+                brief = _brief_for_draft(draft)
+                quality_issues = [
+                    *enrichment_issues(brief, result.body),
+                    *source_overlap_issues(brief, result.body),
+                ]
+                if quality_issues:
+                    return FinalValidation(ok=False, error="；".join(quality_issues))
             return FinalValidation(ok=True, result=result)
 
         try:
@@ -444,12 +464,16 @@ def _generate_stub_field(
             ]
         }
     if field == "body":
+        clauses = _material_clauses(brief.raw_material)
+        detail_lines = "\n".join(
+            f"{index}. {rewrite_material_clause(clause)}"
+            for index, clause in enumerate(clauses, start=1)
+        )
         return {
             "body": (
-                f"这次想认真记录的是：{focus}。\n\n"
-                f"原始素材里提到的过程和细节，我先按原意完整整理下来：\n"
-                f"{brief.raw_material}\n\n"
-                "这篇先保留真实记录，后续可以继续补充当时的细节和感受。"
+                f"围绕{focus}，这次先从已经发生的事实和明确观察开始整理。\n\n"
+                f"记录中的信息点：\n{detail_lines}\n\n"
+                f"这些内容共同组成了{focus}的记录主线；没有提供的经历和结果不额外补写。"
             ).strip()
         }
     if field == "hashtags":

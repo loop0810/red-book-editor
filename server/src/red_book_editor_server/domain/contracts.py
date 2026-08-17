@@ -241,6 +241,7 @@ class StyleProfile(BaseModel):
     display_name: str
     hooks: list[str] = Field(default_factory=list)
     structures: list[StructureTemplate] = Field(default_factory=list)
+    rewrite_rules: list[str] = Field(default_factory=list)
     tone: ToneProfile = Field(default_factory=ToneProfile)
     rich_text: RichTextProfile = Field(default_factory=RichTextProfile)
     tags: TagPool = Field(default_factory=TagPool)
