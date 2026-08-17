@@ -2,7 +2,9 @@
 
 UV_CACHE_DIR ?= /tmp/red-book-editor-uv-cache
 UV_RUN = UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project .
+SERVER_HOST ?= 127.0.0.1
 SERVER_PORT ?= 8100
+export SERVER_HOST
 export SERVER_PORT
 SCORE_ID ?= $(RUN_ID)
 BASELINE_SCORE_ID ?= $(BASELINE_RUN_ID)
@@ -32,7 +34,7 @@ migrate:
 	$(UV_RUN) python -m alembic upgrade head
 
 run:
-	$(UV_RUN) python -m uvicorn red_book_editor_server.main:app --reload --port "$(SERVER_PORT)"
+	$(UV_RUN) python -m uvicorn red_book_editor_server.main:app --reload --host "$(SERVER_HOST)" --port "$(SERVER_PORT)"
 
 eval-baseline:
 	MODEL_PROVIDER=deepseek $(UV_RUN) python -m scripts.run_agent_eval --repetitions 2 --run-id "$${RUN_ID:-baseline-$$(date +%Y%m%d-%H%M%S)}"

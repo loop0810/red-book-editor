@@ -11,6 +11,6 @@ app = create_app()
 def main() -> None:
     uvicorn.run(
         "red_book_editor_server.main:app",
-        host="127.0.0.1",
+        host=get_settings().server_host,
         port=get_settings().server_port,
     )

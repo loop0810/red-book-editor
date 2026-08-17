@@ -6,11 +6,16 @@ import 'package:http/http.dart' as http;
 
 import 'content_workflow_models.dart';
 
+const _defaultApiBaseUrl = 'http://127.0.0.1:8100';
+const _configuredApiBaseUrl = String.fromEnvironment(
+  'API_BASE_URL',
+  defaultValue: _defaultApiBaseUrl,
+);
+
 class RedBookEditorApiClient {
-  RedBookEditorApiClient({
-    http.Client? client,
-    this.baseUrl = 'http://127.0.0.1:8100',
-  }) : _client = client ?? http.Client();
+  RedBookEditorApiClient({http.Client? client, String? baseUrl})
+    : _client = client ?? http.Client(),
+      baseUrl = _normalizeApiBaseUrl(baseUrl ?? _configuredApiBaseUrl);
 
   final http.Client _client;
   final String baseUrl;
@@ -579,6 +584,10 @@ class RedBookEditorApiClient {
       throw ApiRequestException(response.statusCode, response.body);
     }
   }
+}
+
+String _normalizeApiBaseUrl(String value) {
+  return value.trim().replaceFirst(RegExp(r'/+$'), '');
 }
 
 String _contentTypeForFilename(String filename) {

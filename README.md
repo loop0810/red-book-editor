@@ -38,4 +38,21 @@ uv sync
 make run
 ```
 
+安卓真机局域网调试：先在 Mac 上获取局域网 IP，并在可信局域网中启动服务端：
+
+```sh
+cd server
+SERVER_HOST=0.0.0.0 make run
+```
+
+再从 `client/` 使用同一个 Mac IP 启动 Flutter：
+
+```sh
+flutter run -d <android-device> \
+  --dart-define=API_BASE_URL=http://<mac-lan-ip>:8100
+```
+
+先确认真机浏览器可以打开
+`http://<mac-lan-ip>:8100/health/live`。手机和 Mac 必须在可互通的局域网；不要把实际 IP 或密钥提交到仓库。
+
 详细约束和验证命令见根 `AGENTS.md`、`docs/README.md`、`docs/client/README.md` 和 `docs/server/README.md`。

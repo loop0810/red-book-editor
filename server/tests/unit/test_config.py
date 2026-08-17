@@ -10,6 +10,7 @@ from red_book_editor_server.domain.ports import ModelGatewayError
 def test_server_port_defaults_to_port_outside_godot_ai_range() -> None:
     settings = Settings(model_provider="stub")
 
+    assert settings.server_host == "127.0.0.1"
     assert settings.server_port == 8100
 
 
@@ -21,6 +22,16 @@ def test_server_port_can_be_overridden_by_environment(
     settings = Settings(model_provider="stub")
 
     assert settings.server_port == 8101
+
+
+def test_server_host_can_be_overridden_by_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SERVER_HOST", "0.0.0.0")
+
+    settings = Settings(model_provider="stub")
+
+    assert settings.server_host == "0.0.0.0"
 
 
 def test_deepseek_key_is_required_when_building_the_gateway(

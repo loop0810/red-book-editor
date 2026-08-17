@@ -14,6 +14,14 @@ void main() {
     expect(client.baseUrl, 'http://127.0.0.1:8100');
   });
 
+  test('normalizes a configured API base URL', () {
+    final client = RedBookEditorApiClient(
+      baseUrl: ' http://192.168.1.23:8100/// ',
+    );
+
+    expect(client.baseUrl, 'http://192.168.1.23:8100');
+  });
+
   test('StyleForm maps to api values', () {
     expect(styleFormToApi(StyleForm.popularScience), 'popular_science');
     expect(styleFormToApi(StyleForm.experience), 'experience');

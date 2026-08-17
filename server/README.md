@@ -20,6 +20,7 @@ uv sync
 
 # 3. 设置本地开发配置。真实生成使用 DeepSeek，需要 API Key。
 export APP_ENV=development
+export SERVER_HOST=127.0.0.1
 export SERVER_PORT=8100
 export DATABASE_URL=postgresql+asyncpg://red_book_editor:red_book_editor-local-only@127.0.0.1:5432/red_book_editor_development
 export MODEL_PROVIDER=deepseek
@@ -32,8 +33,17 @@ make migrate
 make run
 ```
 
-`make run` 会启动 Uvicorn 的热重载模式，服务地址是
+`make run` 会启动 Uvicorn 的热重载模式，默认服务地址是
 `http://127.0.0.1:8100`。8100 与 Godot AI MCP 默认使用的 8000 分离；修改 Python 文件后服务会自动重载。
+
+安卓真机通过局域网调试时，在可信局域网中使用：
+
+```sh
+SERVER_HOST=0.0.0.0 make run
+```
+
+然后用 Mac 的局域网 IP（例如 `192.168.1.23`）访问
+`http://192.168.1.23:8100/health/live`。不要把实际 IP 或密钥写入仓库。
 
 ### 后续启动
 
@@ -43,6 +53,7 @@ make run
 cd server
 docker compose up -d postgres
 export APP_ENV=development
+export SERVER_HOST=127.0.0.1
 export SERVER_PORT=8100
 export DATABASE_URL=postgresql+asyncpg://red_book_editor:red_book_editor-local-only@127.0.0.1:5432/red_book_editor_development
 export MODEL_PROVIDER=deepseek

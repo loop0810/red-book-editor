@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     """服务端运行时配置。"""
 
     app_env: str = "development"
+    server_host: str = "127.0.0.1"
     # 8000 is reserved by the Godot AI MCP backend during Godot work.
     server_port: int = 8100
     database_url: str = "postgresql+asyncpg://red_book_editor:red_book_editor-local-only@127.0.0.1:5432/red_book_editor_development"
